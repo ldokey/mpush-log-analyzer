@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "case_id": "MPA-CASE-000001",
+  "revision": 1,
+  "title": "Agent 프로세스 유지 중 주기 작업 기록 중단",
+  "status": "investigating",
+  "environment": {
+    "agent_versions": ["3.2", "3.3"],
+    "os": ["linux"],
+    "dbms": ["mysql"],
+    "jobs": ["SEND_REAL_FILE_IMAGE", "HA_RECEIVE_RESULT"]
+  },
+  "symptoms": ["프로세스 실행 상태에서 발송 정체", "주기 작업 기록 공백"],
+  "match_signals": {
+    "required": ["PERIODIC_JOB_GAP"],
+    "supporting": ["SEND_JOB_DELAY", "HEALTHCHECK_GAP"],
+    "excluding": []
+  },
+  "root_cause": null,
+  "resolution": {"actions": [], "verified": false},
+  "verification": {"status": "unknown", "evidence": []},
+  "diagnostic_checks": ["재기동 전 JVM Thread Dump 확보", "DB 대기 및 TCP 연결 상태 확인"],
+  "references": [{"type": "test_fixture", "id": "SYNTHETIC-001"}],
+  "review": {"state": "draft", "approved_at": null}
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mpush-local.invalid/schemas/analysis/1.0",
+  "title": "MPushAgent analysis result (stage 2+ contract)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "analysis_id", "analysis_status", "metrics", "findings", "limitations"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_id": {"type": "string", "pattern": "^analysis_[a-f0-9]{32}$"},
+    "analysis_status": {"enum": ["pending", "partial", "complete"]},
+    "metrics": {"type": "object"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "signal_code", "statement_type", "evidence_file_ids", "description"],
+        "properties": {
+          "finding_id": {"type": "string"},
+          "signal_code": {"type": "string"},
+          "statement_type": {"enum": ["observed", "indicator", "hypothesis"]},
+          "evidence_file_ids": {"type": "array", "items": {"type": "string"}},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "limitations": {"type": "array", "items": {"type": "string"}}
+  }
+}

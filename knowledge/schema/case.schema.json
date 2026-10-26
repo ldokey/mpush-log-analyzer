@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mpush-local.invalid/schemas/case/1.0",
+  "title": "MPushAgent troubleshooting case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "case_id", "revision", "title", "status", "environment", "symptoms", "match_signals", "root_cause", "resolution", "verification", "diagnostic_checks", "references", "review"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "case_id": {"type": "string", "pattern": "^MPA-CASE-[0-9]{6}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "title": {"type": "string", "minLength": 5, "maxLength": 180},
+    "status": {"enum": ["investigating", "mitigated", "resolved_verified"]},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_versions", "os", "dbms", "jobs"],
+      "properties": {
+        "agent_versions": {"$ref": "#/$defs/string_list"},
+        "os": {"$ref": "#/$defs/string_list"},
+        "dbms": {"$ref": "#/$defs/string_list"},
+        "jobs": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "symptoms": {"type": "array", "items": {"type": "string", "minLength": 3, "maxLength": 400}, "minItems": 1, "maxItems": 30, "uniqueItems": true},
+    "match_signals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "supporting", "excluding"],
+      "properties": {
+        "required": {"$ref": "#/$defs/signal_list"},
+        "supporting": {"$ref": "#/$defs/signal_list"},
+        "excluding": {"$ref": "#/$defs/signal_list"}
+      }
+    },
+    "root_cause": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "description", "evidence"],
+          "properties": {
+            "status": {"enum": ["suspected", "confirmed"]},
+            "description": {"type": "string", "minLength": 5, "maxLength": 1500},
+            "evidence": {"$ref": "#/$defs/string_list"}
+          }
+        }
+      ]
+    },
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actions", "verified"],
+      "properties": {
+        "actions": {"$ref": "#/$defs/string_list"},
+        "verified": {"type": "boolean"}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": {"enum": ["unknown", "not_verified", "verified"]},
+        "evidence": {"$ref": "#/$defs/string_list"}
+      }
+    },
+    "diagnostic_checks": {"$ref": "#/$defs/string_list"},
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "id"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {"enum": ["redmine", "internal_case", "manual", "test_fixture"]},
+          "id": {"type": "string", "minLength": 2, "maxLength": 120}
+        }
+      },
+      "maxItems": 25
+    },
+    "review": {
+      "type": "object",
+      "required": ["state", "approved_at"],
+      "additionalProperties": false,
+      "properties": {
+        "state": {"enum": ["draft", "approved", "rejected"]},
+        "approved_at": {"type": ["string", "null"], "format": "date-time"}
+      }
+    }
+  },
+  "$defs": {
+    "string_list": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 200}, "maxItems": 60, "uniqueItems": true},
+    "signal_list": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,70}$"}, "maxItems": 30, "uniqueItems": true}
+  }
+}

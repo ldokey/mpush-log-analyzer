@@ -1,0 +1,42 @@
+{
+  "schema_version": "1.0",
+  "job": {
+    "absolute_default_seconds": 10,
+    "absolute_seconds_by_job": {
+      "SEND_REAL_FILE_IMAGE": 5,
+      "HA_RECEIVE_RESULT": 10
+    },
+    "baseline_min_samples": 5,
+    "median_multiplier": 5,
+    "max_percentile_samples": 100000,
+    "max_evidence_per_job": 3
+  },
+  "sql": {
+    "absolute_ms": 1000,
+    "max_evidence": 5,
+    "max_percentile_samples": 100000
+  },
+  "transport": {
+    "step_seconds": 5
+  },
+  "healthcheck": {
+    "min_intervals": 3,
+    "min_gap_seconds": 30,
+    "multiplier": 3,
+    "max_estimated_interval_seconds": 300,
+    "max_stored_events_per_kind": 50000,
+    "tail_min_gap_seconds": 60
+  },
+  "running": {
+    "min_occurrences": 3,
+    "window_seconds": 180,
+    "max_stored_events": 5000
+  },
+  "findings": {
+    "max_total": 80,
+    "max_evidence_refs": 5
+  },
+  "matches": {
+    "limit": 10
+  }
+}

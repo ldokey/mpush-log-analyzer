@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.1",
+  "signals": [
+    {"code": "SEND_JOB_DELAY", "category": "performance", "meaning": "발송 Job 처리 지연"},
+    {"code": "RESULT_JOB_DELAY", "category": "performance", "meaning": "결과 수신 Job 처리 지연"},
+    {"code": "DB_SQL_DELAY", "category": "database", "meaning": "SQL 실행 시간 증가"},
+    {"code": "HEALTHCHECK_GAP", "category": "scheduler", "meaning": "헬스체크 주기 기록 공백"},
+    {"code": "PERIODIC_JOB_GAP", "category": "scheduler", "meaning": "정기 Job 실행 기록 공백"},
+    {"code": "JOB_RUNNING_STATE", "category": "scheduler", "meaning": "Job 실행 상태로 다음 실행 건너뜀"},
+    {"code": "SQL_ERROR", "category": "database", "meaning": "명시적 SQL 오류"},
+    {"code": "TRANSPORT_ERROR", "category": "network", "meaning": "명시적 통신 오류"},
+    {"code": "AGENT_EXIT_SEEN", "category": "lifecycle", "meaning": "Agent 종료 로그 관측"},
+    {"code": "AGENT_START_SEEN", "category": "lifecycle", "meaning": "Agent 시작 로그 관측"},
+    {"code": "OTHER_JOB_DELAY", "category": "performance", "meaning": "기타 Job 처리시간 증가"},
+    {"code": "TRANSPORT_DELAY", "category": "network", "meaning": "SOCKET/HTTP 단계 처리시간 증가(통신 장애 확정 아님)"},
+    {"code": "GENERAL_EXCEPTION", "category": "error", "meaning": "명시적인 기타 예외/오류 로그"}
+  ]
+}

@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mpush-local.invalid/schemas/case-matches/1.0",
+  "title": "Locally approved case matching result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "catalog_version",
+    "analysis_id",
+    "approved_case_count",
+    "invalid_approved_case_count",
+    "match_count",
+    "matched_cases",
+    "displayed_count",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "catalog_version": {
+      "const": "1.1"
+    },
+    "analysis_id": {
+      "type": "string",
+      "pattern": "^analysis_[0-9a-f]{32}$"
+    },
+    "approved_case_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "invalid_approved_case_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "match_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "displayed_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      }
+    },
+    "matched_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "case_id",
+          "revision",
+          "title",
+          "status",
+          "review_state",
+          "match_rank_score",
+          "score_meaning",
+          "matched_required_signals",
+          "matched_supporting_signals",
+          "unchecked_environment",
+          "evidence_refs",
+          "result_type",
+          "diagnostic_checks",
+          "resolution_actions",
+          "limitations"
+        ],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "pattern": "^MPA-CASE-[0-9]{6}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 180
+          },
+          "status": {
+            "enum": [
+              "investigating",
+              "mitigated",
+              "resolved_verified"
+            ]
+          },
+          "review_state": {
+            "const": "approved"
+          },
+          "match_rank_score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "score_meaning": {
+            "const": "relative_order_only_not_probability"
+          },
+          "matched_required_signals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "matched_supporting_signals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unchecked_environment": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "file_id",
+                "line_start",
+                "line_end",
+                "occurred_at"
+              ],
+              "properties": {
+                "file_id": {
+                  "type": "string"
+                },
+                "line_start": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "line_end": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "occurred_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "result_type": {
+            "enum": [
+              "reference_only",
+              "verified_solution"
+            ]
+          },
+          "diagnostic_checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "resolution_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

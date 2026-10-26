@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mpush-local.invalid/schemas/manifest/1.0",
+  "title": "MPushAgent local intake manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "analysis_id", "created_at", "timezone", "phase", "agent_version", "reference_date", "collected_at", "files", "config_summary", "warnings"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "analysis_id": {"type": "string", "pattern": "^analysis_[a-f0-9]{32}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "timezone": {"const": "Asia/Seoul"},
+    "phase": {"const": "intake"},
+    "agent_version": {"enum": ["auto", "3.2", "3.3"]},
+    "reference_date": {"type": ["string", "null"], "format": "date"},
+    "collected_at": {"type": ["string", "null"], "format": "date-time"},
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file_id", "storage_name", "kind", "content_sha256", "size_bytes", "completeness", "date_hint", "first_time_hint", "last_time_hint", "line_count", "encoding", "confidence", "status"],
+        "properties": {
+          "file_id": {"type": "string", "pattern": "^file_[0-9]{2}$"},
+          "storage_name": {"type": "string", "pattern": "^[a-z0-9_]+\\.(log|ini|txt)$"},
+          "kind": {"enum": ["debug", "job", "dbwrap", "info", "err", "agent_ini", "unknown"]},
+          "content_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "size_bytes": {"type": "integer", "minimum": 0},
+          "completeness": {"enum": ["full", "partial", "unknown"]},
+          "date_hint": {"type": ["string", "null"], "format": "date"},
+          "first_time_hint": {"type": ["string", "null"], "pattern": "^\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?$"},
+          "last_time_hint": {"type": ["string", "null"], "pattern": "^\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?$"},
+          "line_count": {"type": "integer", "minimum": 0},
+          "encoding": {"enum": ["utf-8-sig", "utf-8", "cp949", "utf-8-replace"]},
+          "confidence": {"enum": ["high", "medium", "low"]},
+          "status": {"enum": ["accepted", "duplicate", "unclassified"]}
+        }
+      }
+    },
+    "config_summary": {"type": ["object", "null"]},
+    "warnings": {"type": "array", "items": {"type": "string", "maxLength": 250}, "maxItems": 60}
+  }
+}
