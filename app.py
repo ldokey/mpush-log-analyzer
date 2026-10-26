@@ -15,45 +15,9 @@ from mpush_analyzer.case_library import import_case, list_case_summaries, approv
 from mpush_analyzer.config_ini import parse_agent_ini
 from mpush_analyzer.intake import KINDS, Upload, decode_upload, inspect_uploads
 from mpush_analyzer.storage import save_intake
+from mpush_analyzer.finding_ui import render_finding_review
 
 APP_ROOT = Path(__file__).resolve().parent
-
-def _show_stage3_result(result: dict, matches: dict) -> None:
-    """Concise Stage-3 preview; detailed drill-down is reserved for Stage 4."""
-    findings = result.get("findings", [])
-    st.subheader("탐지된 로그 이상 징후")
-    if not findings:
-        st.info("설정된 분석 규칙에 해당하는 이상 신호가 없습니다. 로그에 오류가 없음을 보증하지는 않습니다.")
-    else:
-        st.dataframe([{
-            "중요도": x["severity"],
-            "신호": x["signal_code"],
-            "유형": x["statement_type"],
-            "설명": x["title"],
-            "근거 파일": ", ".join(x["evidence_file_ids"]),
-            "근거": ", ".join(
-                f"{r['file_id']}:{r['line_start']}-{r['line_end']}"
-                for r in x["evidence_refs"][:3]
-            ),
-        } for x in findings], hide_index=True, use_container_width=True)
-        with st.expander("탐지 근거 및 판단 한계"):
-            st.json(findings, expanded=False)
-    st.subheader("기존 해결 사례 비교")
-    if not matches["matched_cases"]:
-        st.caption("승인된 사례 중 현재 이상 신호와 매칭되는 자료가 없습니다.")
-    else:
-        st.caption("사례 매칭 점수는 표시 순위용이며 동일 원인 확률이 아닙니다.")
-        for m in matches["matched_cases"]:
-            with st.expander(f"{m['case_id']} · {m['title']} · {m['result_type']}"):
-                st.text("일치 신호: " + ", ".join(
-                    m["matched_required_signals"] + m["matched_supporting_signals"]
-                ))
-                st.text("미확인 환경: " + ", ".join(m["unchecked_environment"]))
-                st.text("참고 확인사항:\n" + "\n".join(m["diagnostic_checks"]))
-                if m["result_type"] == "verified_solution":
-                    st.text("검증된 기존 조치:\n" + "\n".join(m["resolution_actions"]))
-                else:
-                    st.warning("원인이 확정되지 않은 참고 사례입니다. 해결책으로 단정하지 않습니다.")
 
 st.set_page_config(page_title="MPushAgent Log Analyzer", page_icon="🔎", layout="wide")
 st.title("MPushAgent Log Analyzer")
@@ -192,10 +156,9 @@ with tab_upload:
                         col_b.metric("Job 종류", len(metrics["job_runs"]))
                         col_c.metric("DB 실행 기록", metrics["db_executions"]["runs"])
                         st.write("분석 범위:", result["analysis_status"])
-                        st.json({"job_runs": metrics["job_runs"],
-                                 "cns_request_responses": metrics["cns_request_responses"],
-                                 "limitations": result["limitations"]}, expanded=False)
-                        _show_stage3_result(result, case_matches)
+                        render_finding_review(
+                            case_dir, manifest, result, case_matches, namespace="new_upload"
+                        )
     else:
         st.caption("업로드한 파일은 작업 생성 버튼을 누르기 전까지 별도 분석 작업으로 저장하지 않습니다.")
 

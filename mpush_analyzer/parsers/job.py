@@ -59,6 +59,7 @@ def _summary(lines: list[tuple[int,str]], job_name: str, stamp: str | None, forc
         target_count = None
     duration_match = TIMED_NUMBER.search(pairs.get("total", ""))
     duration = finite_float(duration_match.group(1)) if duration_match else None
+    start_clock = _clock_korean(pairs.get("시작시간"))
     end_clock = _clock_korean(pairs.get("종료시간"))
     if end_clock is None:
         for _, line in reversed(lines):
@@ -71,7 +72,8 @@ def _summary(lines: list[tuple[int,str]], job_name: str, stamp: str | None, forc
         kind="job_run", start_line=lines[0][0], end_line=lines[-1][0],
         clock=end_clock, status="complete" if complete else "incomplete",
         data={"job_name": job_name, "target_count": target_count, "duration_seconds": duration,
-              "steps_seconds": steps, "reported_tps": _tps(pairs.get("초당 작업 건수", "")),
+              "steps_seconds": steps, "start_clock": start_clock, "end_clock": end_clock,
+              "reported_tps": _tps(pairs.get("초당 작업 건수", "")),
               "completed": complete}
     )
 

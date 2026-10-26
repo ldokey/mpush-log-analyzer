@@ -4,9 +4,10 @@ No SQL text, transport payload, identifiers, credentials or raw exception lines
 are written to derived event files. Source files remain unchanged.
 """
 from __future__ import annotations
+from .fs_compat import private_file_mode
 
 from collections import Counter, defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 import hashlib
 import heapq
 import json
@@ -86,7 +87,7 @@ def _sort_key(event: dict[str, Any]) -> tuple[Any, ...]:
 
 def _write_jsonlines(path: Path, events: list[dict[str, Any]]) -> None:
     with path.open("x", encoding="utf-8") as stream:
-        os.fchmod(stream.fileno(), 0o600)
+        private_file_mode(stream.fileno(), 0o600)
         for event in events:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
 
@@ -100,7 +101,7 @@ def _read_jsonlines(path: Path) -> Iterator[dict[str, Any]]:
 def _merge_many(paths: list[Path], output: Path) -> None:
     iterators = [_read_jsonlines(p) for p in paths]
     with output.open("x", encoding="utf-8") as stream:
-        os.fchmod(stream.fileno(), 0o600)
+        private_file_mode(stream.fileno(), 0o600)
         for event in heapq.merge(*iterators, key=_sort_key):
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
     for generator in iterators:
@@ -138,7 +139,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     staging = Path(staging_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            os.fchmod(stream.fileno(), 0o600)
+            private_file_mode(stream.fileno(), 0o600)
             json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2)
             stream.write("\n")
         os.replace(staging, path)
@@ -258,6 +259,28 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
             for raw in parse_by_kind(source["kind"], _read_numbered(origin, codec, file_stats)):
                 parsed_events += 1
                 occurred_at, quality = clock_resolver.normalize(raw.clock)
+                # The Agent's written start/end clocks are distinct from the event timestamp.
+                # An ambiguous clock without an anchor remains clock-only, never fabricated.
+                if raw.kind == "job_run":
+                    start_clock = raw.data.get("start_clock")
+                    if start_clock and occurred_at:
+                        try:
+                            end_dt = datetime.fromisoformat(occurred_at)
+                            start_dt = end_dt.replace(
+                                hour=int(start_clock[0:2]), minute=int(start_clock[3:5]),
+                                second=int(start_clock[6:8]),
+                                microsecond=int(start_clock[9:12]) * 1000,
+                            )
+                            if start_dt > end_dt and (start_dt - end_dt) >= timedelta(hours=16):
+                                start_dt -= timedelta(days=1)
+                            raw.data["start_at"] = (
+                                start_dt.isoformat(timespec="milliseconds")
+                                if start_dt <= end_dt else None
+                            )
+                        except (ValueError, IndexError):
+                            raw.data["start_at"] = None
+                    else:
+                        raw.data["start_at"] = None
                 entry = {
                     "schema_version": "1.0",
                     "event_id": f"{source['file_id']}_{raw.start_line:09d}",
@@ -334,7 +357,7 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
         if pending_json.is_symlink():
             raise ValueError("출력 임시 경로가 심볼릭 링크입니다.")
         with pending_json.open("w", encoding="utf-8") as stream:
-            os.fchmod(stream.fileno(), 0o600)
+            private_file_mode(stream.fileno(), 0o600)
             json.dump(result, stream, ensure_ascii=False, indent=2, sort_keys=True)
             stream.write("\n")
         pending_events.replace(case_dir / "events.jsonl")

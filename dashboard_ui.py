@@ -10,6 +10,7 @@ from mpush_analyzer.dashboard_data import (
 )
 from mpush_analyzer.report import build_exports
 from mpush_analyzer.source_view import excerpt
+from mpush_analyzer.finding_ui import render_finding_review
 
 
 def _finding_label(value: tuple[int, dict]) -> str:
@@ -99,49 +100,6 @@ def _preview(case_dir: Path, reference: dict, *, namespace: str) -> None:
     st.caption(preview["notice"])
 
 
-def _render_findings(case_dir: Path, manifest: dict, result: dict) -> None:
-    st.markdown("### 이상 징후 및 원본 근거")
-    findings = result.get("findings", [])
-    if not findings:
-        st.info("탐지 규칙에 해당하는 이상 기록이 없습니다. 정상 가동을 보증하는 것은 아닙니다.")
-        return
-    rows = [{
-        "신호": f["signal_code"],
-        "판정 종류": f["statement_type"],
-        "제목": f["title"],
-        "심각도": f["severity"],
-        "근거 위치": ", ".join(
-            f"{r['file_id']}:{r['line_start']}-{r['line_end']}"
-            for r in f.get("evidence_refs", [])[:3]
-        )
-    } for f in findings]
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
-    selected = st.selectbox("상세 확인할 징후 선택", list(enumerate(findings)),
-                            format_func=_finding_label, key=f"finding_{case_dir.name}")
-    if selected is None:
-        return
-    chosen = selected[1]
-    st.write(chosen.get("description", ""))
-    st.caption(f"판정 유형: {chosen['statement_type']} · 탐지 규칙: {chosen.get('rule_id', '-')}")
-    if chosen.get("measure"):
-        st.json(chosen["measure"], expanded=False)
-    refs = chosen.get("evidence_refs", [])
-    if not refs:
-        return
-    chosen_ref = st.selectbox("원본 근거 파일 및 줄", refs,
-        format_func=lambda r: f"{r['file_id']} · {r['line_start']}–{r['line_end']}행 · {r.get('occurred_at') or '시각 미확인'}",
-        key=f"ref_{case_dir.name}")
-    if chosen_ref:
-        _preview(case_dir, chosen_ref, namespace="finding_"+case_dir.name)
-        st.markdown("##### 같은 시간대 다른 로그")
-        near = find_correlated_events(case_dir, manifest, chosen_ref, window_seconds=120, limit=100)
-        if near:
-            st.dataframe(pd.DataFrame(near), hide_index=True, use_container_width=True)
-        else:
-            st.caption("비교 가능한 날짜가 없거나 지정 시간대에 관련 이벤트가 없습니다.")
-        st.caption("시간대가 겹치는 사건을 보여주는 기능이며, 인과관계를 자동 판단하지 않습니다.")
-
-
 def _render_timeline(case_dir: Path, manifest: dict, result: dict) -> None:
     st.markdown("### 시간대별 처리 흐름")
     try:
@@ -226,7 +184,7 @@ def render_dashboard(case_dir: Path, manifest: dict,
         st.warning("입력 일부가 잘렸거나 날짜·시간·파일 완전성에 한계가 있습니다. 통계는 제공된 자료만 기준으로 합니다.")
     render_metrics(result, matches)
     _render_overview_tables(result)
-    _render_findings(case_dir, manifest, result)
+    render_finding_review(case_dir, manifest, result, matches, namespace='dashboard')
     _render_timeline(case_dir, manifest, result)
     st.markdown("### 관련 해결 사례")
     if matches["matched_cases"]:

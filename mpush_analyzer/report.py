@@ -1,5 +1,6 @@
 """Deterministic, privacy-minimized Korean reports, using only allowlisted values."""
 from __future__ import annotations
+from .fs_compat import private_file_mode
 from html import escape as html_escape
 import json
 import os
@@ -8,6 +9,7 @@ import re
 import tempfile
 from typing import Any
 from .pipeline import _get_manifest
+from .finding_view import finding_detail
 
 SIGNAL_LABELS = {
     "SEND_JOB_DELAY": "발송 Job 처리시간 증가",
@@ -113,6 +115,7 @@ def report_data(result: dict[str, Any], matches: dict[str, Any],
                      "threshold_seconds", "threshold_ms", "gap_count", "observed_count", "count"}
             and isinstance(v, (int, float)) and not isinstance(v, bool)
         }
+        detail = finding_detail(f, manifest)
         findings.append({
             "signal": code,
             "title": SIGNAL_LABELS[code],
@@ -120,6 +123,15 @@ def report_data(result: dict[str, Any], matches: dict[str, Any],
             "severity": f.get("severity") if f.get("severity") in {"warning", "info"} else "info",
             "measure": numeric_measure,
             "evidence_locations": refs,
+            "representative_at": detail["representative_at"],
+            "evidence_time_range": detail["evidence_range"],
+            "evidence": [{
+                "when":e["시각"],"file":e["로그 파일"],"position":e["근거"],
+                "job_start_at":e["start_at"]
+            } for e in detail["evidence"]],
+            "interpretation_limit": detail["limitation"],
+            "next_check": detail["next_check"],
+            "sampling_note": detail["sampling_note"],
         })
     related = []
     for case in matches.get("matched_cases", [])[:10]:
@@ -200,8 +212,16 @@ def to_markdown(report: dict[str, Any]) -> str:
         refs = "; ".join(f["evidence_locations"]) or "근거 위치 미확인"
         lines.extend([
             f"{i}. **{f['title']}** ({f['signal']}, {f['statement_type']})",
+            f"   - 대표 발생시각: {f['representative_at']}",
             f"   - 관측 수치: {nums or '별도 수치 없음'}",
             f"   - 근거: {refs}",
+        ])
+        for ev in f["evidence"]:
+            lines.append(f"   - {ev['when']} / {ev['file']} / {ev['position']}")
+        lines.extend([
+            f"   - 해석 한계: {f['interpretation_limit']}",
+            f"   - 추가 확인: {f['next_check']}",
+            f"   - 표본 제한: {f['sampling_note']}",
         ])
     lines.extend(["", "## 4. 관련 기존 사례", ""])
     if report["related_cases"]:
@@ -248,7 +268,10 @@ def to_html(report: dict[str, Any]) -> str:
             " <span class='code'>" + h(f["signal"]) + "</span></h3>"
             "<p class='muted'>판정: " + h(f["statement_type"]) +
             " · 관측 수치: " + h(nums or "별도 수치 없음") +
-            "</p><p>원본 근거: " + h(refs) + "</p></article>"
+            "</p><p>대표 발생시각: " + h(f["representative_at"]) +
+            "</p><p>원본 근거: " + h(refs) +
+            "</p><p>판단 한계: " + h(f["interpretation_limit"]) +
+            "</p><p>추가 확인: " + h(f["next_check"]) + "</p></article>"
         )
     cases = [
         "<li>" + h(x["case_id"]) + " r" + h(x["revision"]) +
@@ -339,7 +362,7 @@ def save_exports(case_dir: Path, exports: dict[str, bytes]) -> None:
         tmp = Path(temp_name)
         try:
             with os.fdopen(fd,"wb") as writer:
-                os.fchmod(writer.fileno(),0o600)
+                private_file_mode(writer.fileno(),0o600)
                 writer.write(payload)
             os.replace(tmp,path)
         finally:

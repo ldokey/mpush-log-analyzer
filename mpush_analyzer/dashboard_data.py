@@ -13,6 +13,7 @@ import re
 from typing import Any, Iterator
 
 from .pipeline import _get_manifest
+from .finding_view import source_map
 
 MAX_PAGE_SIZE = 250
 MAX_TIMELINE_POINTS = 1800
@@ -72,7 +73,7 @@ def events_iter(case_dir: Path, manifest: dict[str, Any]) -> Iterator[dict[str, 
             yield {k: event.get(k) for k in EVENT_KEYS}
 
 
-def _display_event(event: dict[str, Any]) -> dict[str, Any]:
+def _display_event(event: dict[str, Any], aliases: dict[str, dict[str, str]] | None = None) -> dict[str, Any]:
     details = event.get("details") or {}
     # Fixed allowlist of short, structural, non-personal display fields.
     field_names = ("job_name", "duration_seconds", "laptime_ms",
@@ -89,7 +90,8 @@ def _display_event(event: dict[str, Any]) -> dict[str, Any]:
             pieces.append(f"{key}: {value}")
     return {
         "시간": event.get("occurred_at") or event.get("clock") or "미확인",
-        "로그": event.get("log_kind") or "unknown",
+        "로그": (aliases or {}).get(event.get("file_id"), {}).get("display", event.get("log_kind") or "unknown"),
+        "로그 유형": event.get("log_kind") or "unknown",
         "유형": event.get("event_type") or "unknown",
         "주요값": ", ".join(pieces[:5]),
         "근거 위치": f"{event['file_id']}:{event['line_start']}-{event['line_end']}",
@@ -124,6 +126,7 @@ def summarize_events(case_dir: Path, manifest: dict[str, Any],
     by_job: dict[str, int] = defaultdict(int)
     timeline: dict[str, dict[str, int | float]] = {}
     bucket_granularity = "minute"
+    aliases = source_map(manifest)
     offset = (page - 1) * page_size
     first_minute, last_minute = None, None
     for event in events_iter(case_dir, manifest):
@@ -133,7 +136,7 @@ def summarize_events(case_dir: Path, manifest: dict[str, Any],
         typ = event.get("event_type") or "unknown"
         by_type[typ] += 1
         if offset < total <= offset + page_size:
-            displayed.append(_display_event(event))
+            displayed.append(_display_event(event, aliases))
         details = event.get("details") or {}
         if typ == "job_run":
             job = details.get("job_name")
@@ -210,13 +213,14 @@ def find_correlated_events(case_dir: Path, manifest: dict[str, Any],
         return []
     target = datetime.fromisoformat(center)
     results: list[dict[str, Any]] = []
+    aliases = source_map(manifest)
     for event in events_iter(case_dir, manifest):
         stamp = event.get("occurred_at")
         if not isinstance(stamp, str):
             continue
         moment = datetime.fromisoformat(stamp)
         if abs((moment - target).total_seconds()) <= window_seconds:
-            results.append(_display_event(event))
+            results.append(_display_event(event, aliases))
             if len(results) >= limit:
                 break
     return results

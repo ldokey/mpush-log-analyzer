@@ -68,8 +68,11 @@ def _dt(e: dict[str, Any]) -> datetime | None:
 
 
 def _ref(e: dict[str, Any]) -> dict[str, Any]:
+    details = e.get("details") or {}
     return {"file_id": e["file_id"], "line_start": e["line_start"],
-            "line_end": e["line_end"], "occurred_at": e.get("occurred_at")}
+            "line_end": e["line_end"], "occurred_at": e.get("occurred_at"),
+            "clock": e.get("clock"), "log_kind": e.get("log_kind"),
+            "start_at": details.get("start_at") if e.get("event_type") == "job_run" else None}
 
 
 def _job_bucket(target: Any) -> str:
@@ -106,7 +109,14 @@ def _finding(signal: str, rule_id: str, title: str, text: str,
              statement: str = "indicator", confidence: str = "medium",
              measure: dict[str, Any] | None = None) -> dict[str, Any]:
     unique = list({(e["file_id"], e["line_start"]): e for e in events}.values())
+    times = sorted(e["occurred_at"] for e in unique if e.get("occurred_at"))
+    # These refer only to sampled evidence, not every occurrence in the entire source.
+    primary = unique[0] if unique else None
     return {
+        "representative_at": primary.get("occurred_at") if primary else None,
+        "evidence_first_at": times[0] if times else None,
+        "evidence_last_at": times[-1] if times else None,
+        "time_basis": "sampled_evidence",
         "finding_id": "", "signal_code": signal, "rule_id": rule_id,
         "statement_type": statement, "severity": severity, "confidence": confidence,
         "title": title, "description": text,
@@ -413,7 +423,8 @@ def detect_anomalies(
                     f"{delta:.0f}초의 공백이 있습니다. 정상 종료·정지 여부는 로그에서 확인되지 않습니다.",
                     [last_e], confidence="medium", measure={
                         "tail_gap_seconds": delta, "estimated_interval_seconds": baseline,
-                        "time_basis": "user_supplied_collection_time"}))
+                        "time_basis": "user_supplied_collection_time",
+                        "collected_at": manifest["collected_at"]}))
                 if log_sources and all(s["completeness"] == "full" for s in log_sources):
                     latest_job = max(last_job.values(), key=lambda e: _dt(e)) if last_job else None
                     if latest_job and _dt(latest_job) is not None:
@@ -427,7 +438,8 @@ def detect_anomalies(
                                 [last_e, latest_job], confidence="low",
                                 measure={"healthcheck_tail_seconds": delta,
                                          "job_tail_seconds": job_delta,
-                                         "time_basis": "user_supplied_collection_time"}))
+                                         "time_basis": "user_supplied_collection_time",
+                        "collected_at": manifest["collected_at"]}))
     if not health_tail_candidates and debug_sources:
         limitations.append("헬스체크 반복 주기 표본이 부족하거나 날짜가 없어 수집 시각과 비교하지 않았습니다.")
 

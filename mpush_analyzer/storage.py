@@ -1,5 +1,6 @@
 """Local-only private stage-1 intake storage. No original customer names in JSON."""
 from __future__ import annotations
+from .fs_compat import private_file_mode
 
 from collections import defaultdict
 from datetime import date, datetime
@@ -123,10 +124,10 @@ def save_intake(
         for storage_name, data in planned:
             dest = raw_dir / storage_name
             with dest.open("xb") as stream:
-                os.fchmod(stream.fileno(), 0o600)
+                private_file_mode(stream.fileno(), 0o600)
                 stream.write(data)
         with (case_dir / "manifest.json").open("x", encoding="utf-8") as stream:
-            os.fchmod(stream.fileno(), 0o600)
+            private_file_mode(stream.fileno(), 0o600)
             json.dump(manifest, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
     except Exception:
