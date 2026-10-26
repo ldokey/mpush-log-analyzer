@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from mpush_analyzer.ai_brief_v2 import build_ai_exports
+from mpush_analyzer.incident_overview import category, finding_time_sort_key, snapshot
 from mpush_analyzer.dashboard_data import (
     EventFilters, find_correlated_events, read_result_bundle, summarize_events
 )
@@ -46,6 +47,40 @@ def render_metrics(result: dict, matches: dict) -> None:
         "Job 실행 횟수·작업대상건수·최종 발송 성공은 서로 다릅니다. "
         "CNS RESPONSE_CODE=S는 요청 수락만 뜻합니다."
     )
+
+
+def _render_incident_snapshot(result: dict, manifest: dict) -> None:
+    """Bring trustworthy incident context above the analyst's first scroll."""
+    overview = snapshot(result, manifest)
+    st.markdown("#### 로그 근거 한눈에 보기")
+    a, b, c = st.columns(3)
+    def show_clock(column, label: str, timestamp: str | None, *, collected: bool = False) -> None:
+        if not timestamp:
+            column.metric(label, "확인 불가")
+            column.caption("별도의 날짜·시각 근거가 없습니다.")
+            return
+        if timestamp.startswith("날짜 미확인 · "):
+            column.metric(label, timestamp.partition(" · ")[2])
+            column.caption("날짜 미확인 · 로그의 시각만 표시")
+            return
+        # Separate date from time to prevent a long timestamp overflowing each KPI.
+        stamp_date = timestamp[:10]
+        clock = timestamp[11:23].lstrip("T") or "확인 불가"
+        column.metric(label, clock)
+        column.caption(stamp_date + (" · 사용자 입력" if collected else " · 원본 로그 근거"))
+
+    show_clock(a, "첫 탐지 근거", overview["first_evidence"])
+    show_clock(b, "마지막 탐지 근거", overview["last_evidence"])
+    show_clock(c, "자료 수집 시각", overview["collected_at"], collected=True)
+    counts = overview["categories"]
+    if counts:
+        st.caption("이상 유형별 탐지: " + " · ".join(
+            f"{name} {count}건" for name, count in sorted(counts.items())
+        ))
+    if overview["incomplete_file_count"] or overview["unknown_date_event_count"]:
+        st.warning(f"원본 완전성 미확인·일부 추출 파일 {overview['incomplete_file_count']}개 · "
+                   f"날짜 미확인 이벤트 {overview['unknown_date_event_count']:,}개")
+    st.caption(overview["note"])
 
 
 def _render_overview_tables(result: dict, manifest: dict) -> None:
@@ -119,13 +154,30 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
         "행을 선택하면 아래에서 근거와 탐지 수치를 확인할 수 있습니다. "
         "표시된 시각은 실제 장애 시작시각이 아닌 로그에 기록된 대표 시각일 수 있습니다."
     )
-    rows = [summary_row(item, manifest) for item in findings]
-    selected = st.dataframe(pd.DataFrame(rows), hide_index=True, width='stretch',
+    csort, cgroup = st.columns([2, 2])
+    sort = csort.selectbox("표시 순서", ["근거 시각순", "주의 수준순"],
+                           key=f"findings_sort_v3_{case_dir.name}")
+    filter_options = ["전체"] + sorted({category(item) for item in findings})
+    group = cgroup.selectbox("유형 필터", filter_options,
+                            key=f"findings_category_v3_{case_dir.name}")
+    visible = [item for item in findings if group == "전체" or category(item) == group]
+    if not visible:
+        st.info("선택한 유형에 해당하는 탐지 항목이 없습니다.")
+        return
+    if sort == "근거 시각순":
+        visible.sort(key=finding_time_sort_key)
+    else:
+        visible.sort(key=lambda f: (0 if f.get("severity") == "warning" else 1,
+                                    finding_time_sort_key(f)))
+    rows = [summary_row(item, manifest) for item in visible]
+    columns = ["대표/기준 시각", "이상 항목", "주요 수치", "근거 파일", "심각도", "판정"]
+    st.caption(f"현재 {len(visible)}건 표시 · 목록 시각은 대표 로그 또는 대표 구간 기준이며 장애 시작시각이 아닙니다.")
+    selected = st.dataframe(pd.DataFrame(rows)[columns], hide_index=True, width='stretch',
                             height=min(425, 54 + 36 * len(rows)),
                             on_select="rerun", selection_mode="single-row",
-                            key=f"findings_v2_{case_dir.name}")
-    index = max(0, min(_table_selection(selected), len(findings) - 1))
-    item = findings[index]
+                            key=f"findings_v3_{case_dir.name}")
+    index = max(0, min(_table_selection(selected), len(visible) - 1))
+    item = visible[index]
     presentation = finding_details(item, manifest)
 
     st.divider()
@@ -137,14 +189,17 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
     st.caption("탐지 근거의 강도이지 장애 원인의 확실성을 뜻하지 않습니다.")
 
     time = presentation["time"]
+    st.markdown("**탐지 기준 및 수치 비교**")
+    st.write(presentation["why_flagged"])
+    measures = presentation["measurements"]
+    if measures:
+        st.dataframe(pd.DataFrame(measures), hide_index=True, width='stretch')
     left, right = st.columns([3, 2])
     with left:
         st.markdown("**관측 사실**")
         st.write(presentation["summary"])
         if presentation["analysis_detail"]:
             st.write(presentation["analysis_detail"])
-        st.markdown("**왜 탐지됐나**")
-        st.write(presentation["why_flagged"])
         st.markdown("**다음 확인 사항**")
         st.write(presentation["next_check"])
     with right:
@@ -156,20 +211,20 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
         ]))
         st.caption(time["신뢰 안내"])
 
-    measures = presentation["measurements"]
-    if measures:
-        st.markdown("**탐지 수치 및 비교 기준**")
-        st.dataframe(pd.DataFrame(measures), hide_index=True, width='stretch')
     st.markdown("**근거 로그 위치**")
     refs = presentation["evidence"]
     if refs:
-        show_cols = ["근거시각", "근거 파일", "줄", "날짜 근거",
-                     "로그상 시작", "계산상 시작", "시작시각 주의", "관측 구분"]
+        show_cols = ["근거시각", "근거 파일", "줄", "날짜 근거", "관측 구분"]
         evidence_table = st.dataframe(
             pd.DataFrame(refs)[show_cols], hide_index=True, width='stretch',
             on_select="rerun", selection_mode="single-row",
             key=f"evidence_v2_{case_dir.name}_{presentation['finding_id']}")
         chosen = refs[max(0, min(_table_selection(evidence_table), len(refs) - 1))]
+        if chosen.get("로그상 시작") not in {None, "-"}:
+            st.caption("로그상 Job 시작: " + chosen["로그상 시작"])
+        if chosen.get("계산상 시작") not in {None, "-"}:
+            st.caption("소요시간으로 계산한 시작: " + chosen["계산상 시작"]
+                       + " · " + chosen.get("시작시각 주의", ""))
         st.markdown("##### 선택 근거의 마스킹된 원본")
         _preview(case_dir, {
             "file_id": chosen["원본 ID"], "line_start": chosen["시작행"],
@@ -214,7 +269,9 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
             )
     packet = st.session_state.get(f"ai_single_packet_{case_dir.name}")
     if packet and packet[0] == item["finding_id"]:
-        st.code(packet[1].decode("utf-8"), language="markdown")
+        st.caption("코드 블록의 복사 버튼을 이용하거나 Markdown 파일을 내려받아 AI에 전달할 수 있습니다.")
+        with st.expander("AI 질문에 사용할 비식별 내용 미리보기", expanded=False):
+            st.code(packet[1].decode("utf-8"), language="markdown")
         col1, col2 = st.columns(2)
         with col1:
             st.download_button("이 징후 Markdown 받기", packet[1],
@@ -300,10 +357,16 @@ def render_dashboard(case_dir: Path, manifest: dict,
     if result.get("analysis_status") != "complete":
         st.warning("입력 로그가 불완전하거나 기준 날짜가 확인되지 않았습니다. 일부 통계·시간 해석은 제한됩니다.")
     render_metrics(result, matches)
-    _render_findings(case_dir, manifest, result, matches)
-    st.divider()
-    _render_overview_tables(result, manifest)
-    _render_timeline(case_dir, manifest, result)
+    _render_incident_snapshot(result, manifest)
+    tab_find, tab_timeline, tab_stats = st.tabs([
+        "이상 징후·근거", "시간대별 로그", "처리 통계·파일"
+    ])
+    with tab_find:
+        _render_findings(case_dir, manifest, result, matches)
+    with tab_timeline:
+        _render_timeline(case_dir, manifest, result)
+    with tab_stats:
+        _render_overview_tables(result, manifest)
 
 
 def render_exports(result: dict, matches: dict, manifest: dict, case_dir: Path | None = None) -> None:

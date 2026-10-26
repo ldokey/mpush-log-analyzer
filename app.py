@@ -114,7 +114,7 @@ with tab_upload:
                 "마지막 시각": x.last_time_hint or "-",
                 "완전성": x.upload.completeness,
                 "중복": f"{x.duplicate_of}번과 동일" if x.duplicate_of else "-",
-            } for i, x in enumerate(inspected)], hide_index=True, use_container_width=True)
+            } for i, x in enumerate(inspected)], hide_index=True, width='stretch')
             for x in inspected:
                 for warning in x.warnings:
                     st.warning(f"{x.label}: {warning}")
@@ -160,7 +160,7 @@ with tab_upload:
                             st.markdown("**감지한 이상 징후 (대표 로그 시각·수치·근거)**")
                             st.dataframe(
                                 [summary_row(item, manifest) for item in result["findings"]],
-                                hide_index=True, use_container_width=True
+                                hide_index=True, width='stretch'
                             )
                         else:
                             st.info("현재 규칙에서 감지된 이상 징후는 없습니다.")
@@ -235,7 +235,7 @@ with tab_case:
     st.subheader("승인된 사례")
     approved_list = list_case_summaries(state="approved")
     if approved_list:
-        st.dataframe(approved_list, hide_index=True, use_container_width=True)
+        st.dataframe(approved_list, hide_index=True, width='stretch')
         st.caption("기존 분석에 반영하려면 '기존 분석 다시 실행' 탭에서 재분석해 주세요.")
     else:
         st.caption("아직 승인된 사례가 없습니다.")
@@ -274,7 +274,7 @@ with tab_report:
                     st.dataframe([{
                         "파일": f["file_id"], "종류": f["kind"], "완전성": f["completeness"],
                         "기록 처음": f["first_time_hint"], "기록 마지막": f["last_time_hint"]
-                    } for f in manifest["files"]], hide_index=True, use_container_width=True)
+                    } for f in manifest["files"]], hide_index=True, width='stretch')
 
             st.divider()
             with st.expander("이 분석 작업의 로컬 데이터 영구 삭제"):

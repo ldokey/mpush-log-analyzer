@@ -280,6 +280,12 @@ def detect_anomalies(
             signal = ("SEND_JOB_DELAY" if job.startswith("SEND_") else
                 "RESULT_JOB_DELAY" if job == "HA_RECEIVE_RESULT" else "OTHER_JOB_DELAY")
             duration = source["details"]["duration_seconds"]
+            source_bucket = _job_bucket(source["details"].get("target_count"))
+            same_bucket = group["by_bucket"].get(source_bucket, [])
+            baseline_median = (median(same_bucket)
+                               if len(same_bucket) >= rules["job"]["baseline_min_samples"] else None)
+            effective_threshold = max(raw_threshold, baseline_median * rules["job"]["median_multiplier"]) \
+                if baseline_median is not None else raw_threshold
             steps = source["details"].get("steps_seconds") or {}
             prominent = sorted(
                 [(name, value) for name, value in steps.items()
@@ -292,7 +298,11 @@ def detect_anomalies(
                 f"완료 Job에서 최대 {duration:.3f}초가 기록되었습니다{note}. 해당 단계의 세부 원인은 로그만으로 확정되지 않습니다.",
                 qualified, confidence="high" if group["count"] >= rules["job"]["baseline_min_samples"] else "medium",
                 measure={"job_name": job, "max_seconds": duration, "observed_count": group["count"],
-                         "above_absolute_count": group["slow_count"], "threshold_seconds":raw_threshold}))
+                         "above_absolute_count": group["slow_count"], "threshold_seconds":raw_threshold,
+                         "effective_threshold_seconds": round(effective_threshold, 6),
+                         "baseline_median_seconds": round(baseline_median, 6)
+                         if baseline_median is not None else None,
+                         "baseline_sample_count": len(same_bucket)}))
 
         if group["transport_slow"]:
             longest = group["transport_slow"][0][0]
@@ -404,7 +414,14 @@ def detect_anomalies(
                 ev, confidence="high" if len(dated) >= 6 else "medium",
                 measure={"baseline_seconds": baseline,
                          "max_gap_seconds": max(x[0] for x in gaps),
-                         "gap_count": len(gaps)}))
+                         "gap_count": len(gaps)},
+                time_context={
+                    "kind": "observed_interval",
+                    "start_at": max(gaps, key=lambda x: x[0])[1].get("occurred_at"),
+                    "end_at": max(gaps, key=lambda x: x[0])[2].get("occurred_at"),
+                    "end_source": "observed_log",
+                    "is_full_occurrence_range": False,
+                }))
         if dated and baseline is not None:
             health_tail_candidates.append((dated[-1][0], dated[-1][1], baseline))
 

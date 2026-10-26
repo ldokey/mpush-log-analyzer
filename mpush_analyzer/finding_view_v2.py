@@ -39,7 +39,10 @@ TIME_DATE_SOURCES = {
 }
 UNITS = {
     "max_seconds": ("최대 처리시간", "초"),
-    "threshold_seconds": ("탐지 임계값", "초"),
+    "threshold_seconds": ("절대 탐지 기준", "초"),
+    "effective_threshold_seconds": ("실제 판정 기준", "초"),
+    "baseline_median_seconds": ("동일 작업량 중앙값", "초"),
+    "baseline_sample_count": ("동일 작업량 비교 표본수", "건"),
     "max_stage_seconds": ("최대 단계시간", "초"),
     "max_laptime_ms": ("최대 SQL 실행시간", "ms"),
     "threshold_ms": ("SQL 임계값", "ms"),
@@ -162,6 +165,41 @@ def time_information(finding: dict[str, Any]) -> dict[str, str]:
             "끝": format_timestamp(context.get("end_at")),
             "신뢰 안내": "끝 시각은 장비 로그가 아니라 사용자가 입력한 수집 시각입니다.",
         }
+    # A Job finding is anchored to a completed run, NOT necessarily the time
+    # when a customer-visible failure began. A confirmed clock start is distinct
+    # from the duration-derived estimate and must never replace raw evidence.
+    if finding.get("rule_id") in {"JOB_DURATION", "TRANSPORT_STEP"}:
+        representative = next((r for r in refs if r.get("event_type") == "job_run"
+                               and isinstance(r.get("occurred_at"), str)), None)
+        if representative:
+            completed = format_timestamp(representative["occurred_at"])
+            if representative.get("start_at") and representative.get("start_time_quality") != "duration_clock_conflict":
+                return {
+                    "기준": "대표 Job 1회 실행 구간 (기록된 시작 → 완료)",
+                    "시작": format_timestamp(representative["start_at"]),
+                    "끝": completed,
+                    "신뢰 안내": "Job 한 번의 처리 구간입니다. 전체 장애 발생시각이나 지속시간은 확인되지 않았습니다.",
+                }
+            if representative.get("calculated_start_at"):
+                return {
+                    "기준": "대표 Job 1회 처리 구간 (시작은 소요시간으로 역산)",
+                    "시작": format_timestamp(representative["calculated_start_at"]),
+                    "끝": completed,
+                    "신뢰 안내": "시작시각은 계산값이며 원본 시작 기록과 다를 수 있습니다. 전체 장애 구간은 아닙니다.",
+                }
+            return {
+                "기준": "대표 Job 완료 기록시각 (시작 정보 부족)",
+                "시작": "확인 불가", "끝": completed,
+                "신뢰 안내": "Job 실행 시작과 장애 발생시각은 확인되지 않았습니다.",
+            }
+    context = finding.get("time_context") or {}
+    if kind == "observed_interval" and isinstance(context.get("start_at"), str) and isinstance(context.get("end_at"), str):
+        return {
+            "기준": "관측된 대표 헬스체크 간격 (장애 지속시간 아님)",
+            "시작": format_timestamp(context["start_at"]),
+            "끝": format_timestamp(context["end_at"]),
+            "신뢰 안내": "두 로그 기록 사이의 공백입니다. 헬스체크 미기록이 프로세스 종료를 입증하지는 않습니다.",
+        }
     stamped = sorted(r.get("occurred_at") for r in refs if isinstance(r.get("occurred_at"), str))
     if stamped:
         first = stamped[0]
@@ -180,6 +218,57 @@ def time_information(finding: dict[str, Any]) -> dict[str, str]:
         "끝": "확인 불가",
         "신뢰 안내": "로그 기준 날짜가 없으므로 발생 날짜를 임의로 계산하지 않았습니다.",
     }
+
+
+def _measurement(finding: dict[str, Any], key: str) -> float | None:
+    value = (finding.get("measure") or {}).get(key)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1e12:
+        return float(value)
+    return None
+
+
+def quantified_reason(finding: dict[str, Any], fallback: str) -> str:
+    """Quantitative, safe explanation from numeric data only, never raw log prose."""
+    rule = finding.get("rule_id")
+    groups = {
+        "JOB_DURATION": ("max_seconds", "threshold_seconds", "초", "Job 처리시간"),
+        "TRANSPORT_STEP": ("max_stage_seconds", "threshold_seconds", "초", "SOCKET/HTTP 단계시간"),
+        "SQL_DURATION": ("max_laptime_ms", "threshold_ms", "ms", "SQL 실행시간"),
+    }
+    if rule in groups:
+        observed_key, threshold_key, unit, subject = groups[rule]
+        observed = _measurement(finding, observed_key)
+        threshold = (_measurement(finding, "effective_threshold_seconds")
+                     if rule == "JOB_DURATION" else None)
+        if threshold is None:
+            threshold = _measurement(finding, threshold_key)
+        if observed is not None and threshold is not None and threshold > 0:
+            ratio = observed / threshold
+            comparator = "실제 판정 기준" if rule == "JOB_DURATION" else "설정된 탐지 기준"
+            return (f"기록된 최대 {subject} {observed:,.3f}{unit}가 {comparator} "
+                    f"{threshold:,.3f}{unit}의 약 {ratio:,.1f}배입니다. " + fallback)
+    if rule == "HEALTHCHECK_INTERVAL":
+        gap = _measurement(finding, "max_gap_seconds")
+        baseline = _measurement(finding, "baseline_seconds")
+        if gap is not None and baseline is not None and baseline > 0:
+            return (f"두 헬스체크 로그 간 최대 {gap:,.1f}초 공백이 관측됐으며, "
+                    f"관측 표본의 통상 간격은 약 {baseline:,.1f}초입니다. " + fallback)
+    if rule == "HEALTHCHECK_TAIL":
+        gap = _measurement(finding, "tail_gap_seconds")
+        if gap is not None:
+            return (f"마지막 헬스체크 기록부터 사용자가 입력한 수집 시각까지 {gap:,.0f}초입니다. "
+                    "이 차이는 장애가 지속된 시간과 다릅니다. " + fallback)
+    if rule == "MULTI_LOG_TAIL":
+        health = _measurement(finding, "healthcheck_tail_seconds")
+        job = _measurement(finding, "job_tail_seconds")
+        if health is not None and job is not None:
+            return (f"수집 시각 기준 헬스체크 최종 기록은 {health:,.0f}초 전, "
+                    f"Job 최종 기록은 {job:,.0f}초 전입니다. " + fallback)
+    if rule == "EXPLICIT_ERROR":
+        count = _measurement(finding, "count")
+        if count is not None:
+            return f"명시적인 오류 기록 {count:,.0f}건이 식별됐습니다. " + fallback
+    return fallback
 
 
 def details(finding: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
@@ -203,7 +292,9 @@ def details(finding: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]
         "confidence": CONFIDENCE.get(finding.get("confidence"), "확인 필요"),
         "time": timings,
         "summary": observation,
-        "why_flagged": EXPLANATIONS.get(finding.get("rule_id"), "관측된 기록의 탐지 기준을 검토하세요."),
+        "why_flagged": quantified_reason(
+            finding, EXPLANATIONS.get(finding.get("rule_id"), "관측된 기록의 탐지 기준을 검토하세요.")
+        ),
         "analysis_detail": safe_description[:1200],
         "measurements": measurements,
         "evidence": evidence_rows(finding, manifest),
@@ -219,13 +310,17 @@ def summary_row(finding: dict[str, Any], manifest: dict[str, Any]) -> dict[str, 
     value = ", ".join(x["측정값"] for x in full["measurements"]
                       if x["항목"] in {"최대 처리시간", "최대 SQL 실행시간", "수집 시각까지 기록 공백",
                                        "최대 기록 공백", "관측된 오류 건수", "최대 단계시간"})[:2]
+    distinct_files = list(dict.fromkeys(e["근거 파일"] for e in evidence))
+    short_files = (distinct_files[0] + f" 외 {len(distinct_files) - 1}개"
+                   if len(distinct_files) > 1 else distinct_files[0] if distinct_files else "미확인")
     return {
         "ID": str(full["finding_id"]),
         "판정": str(full["statement"]),
         "심각도": str(full["severity"]),
         "대표/기준 시각": timing["시작"],
+        "시간 의미": timing["기준"],
         "이상 항목": str(full["title"]),
         "주요 수치": value or "기록 관측",
-        "근거 파일": ", ".join(dict.fromkeys(e["근거 파일"] for e in evidence)),
+        "근거 파일": short_files,
         "근거 수": str(len(evidence)),
     }

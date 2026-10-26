@@ -5,7 +5,7 @@ No raw logs, SQL, identifiers, user-upload filenames or AI-authored case prose.
 """
 from __future__ import annotations
 
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from datetime import datetime
 import json
 from pathlib import Path
@@ -58,48 +58,47 @@ def _safe_lines(raw: Any) -> list[str]:
 
 def _context_events(case_dir: Path, manifest: dict[str, Any],
                     observed: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    anchors = []
-    for record in observed:
-        first = next(
-            (ref.get("occurred_at") for ref in record.get("evidence", [])
-             if isinstance(ref.get("occurred_at"), str)), None
-        )
-        if first:
-            try:
-                anchors.append((datetime.fromisoformat(first), record["finding_id"]))
-            except ValueError:
-                pass
-    if not anchors:
-        return {}
-    # Several findings can share the same timestamp (e.g. heartbeat-tail +
-    # periodic-Job-tail). Keep every finding in that timestamp group.
+    """Return nearby sanitized events for up to twelve evidence timestamps.
+
+    Each timestamp with matching records receives at least one context event,
+    before other high-priority records fill the remaining output slots. This
+    prevents one dense interval from hiding every later event in a finding.
+    """
+    from datetime import timedelta
+
     anchors_by_time: dict[datetime, list[str]] = {}
-    for at, finding_id in anchors:
-        target = anchors_by_time.setdefault(at, [])
-        if finding_id not in target:
-            target.append(finding_id)
+    all_ids: list[str] = []
+    for record in observed:
+        finding_id = record["finding_id"]
+        all_ids.append(finding_id)
+        for ref in record.get("evidence", [])[:12]:
+            raw = ref.get("occurred_at")
+            if not isinstance(raw, str):
+                continue
+            try:
+                at = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+            group = anchors_by_time.setdefault(at, [])
+            if finding_id not in group:
+                group.append(finding_id)
+    if not anchors_by_time:
+        return {}
     timestamps = sorted(anchors_by_time)
-    buckets: dict[str, list[tuple[tuple[Any, ...], dict[str, Any]]]] = {
-        finding_id: [] for _, finding_id in anchors
-    }
+    per_anchor: dict[tuple[str, datetime], list[tuple[tuple[Any, ...], dict[str, Any]]]] = {}
+    max_per_anchor = 4
+
     for event in events_iter(case_dir, manifest):
         raw_at = event.get("occurred_at")
         if not isinstance(raw_at, str):
             continue
         try:
-            moment = datetime.fromisoformat(raw_at)
-            idx = bisect_left(timestamps, moment)
+            at = datetime.fromisoformat(raw_at)
+            left = bisect_left(timestamps, at - timedelta(seconds=_CONTEXT_WINDOW))
+            right = bisect_right(timestamps, at + timedelta(seconds=_CONTEXT_WINDOW))
         except (ValueError, TypeError):
             continue
-        near = []
-        for offset in (idx - 1, idx):
-            if 0 <= offset < len(timestamps):
-                at = timestamps[offset]
-                distance = abs((moment - at).total_seconds())
-                if distance <= _CONTEXT_WINDOW:
-                    near.extend((finding_id, distance)
-                                for finding_id in anchors_by_time[at])
-        if not near:
+        if left == right:
             continue
         shown = _display_event(event)
         entity = {
@@ -109,16 +108,49 @@ def _context_events(case_dir: Path, manifest: dict[str, Any],
             "safe_summary": shown["주요값"][:220],
             "evidence_lines": shown["근거 위치"],
         }
-        for identifier, distance in near:
-            rank = (_EVENT_PRIORITY.get(event.get("event_type"), 50), distance,
+        for anchor_at in timestamps[left:right]:
+            seconds = abs((at - anchor_at).total_seconds())
+            rank = (_EVENT_PRIORITY.get(event.get("event_type"), 50), seconds,
                     str(event.get("file_id")), int(event.get("line_start", 0)))
-            bucket = buckets[identifier]
-            if not any(x[1]["evidence_lines"] == entity["evidence_lines"] for x in bucket):
+            for finding_id in anchors_by_time[anchor_at]:
+                bucket = per_anchor.setdefault((finding_id, anchor_at), [])
+                if any(x[1]["evidence_lines"] == entity["evidence_lines"] for x in bucket):
+                    continue
+                if len(bucket) >= max_per_anchor and rank >= bucket[-1][0]:
+                    continue
                 bucket.append((rank, entity))
                 bucket.sort(key=lambda x: x[0])
-                if len(bucket) > _MAX_CONTEXT:
-                    del bucket[_MAX_CONTEXT:]
-    return {k: [event for _, event in value] for k, value in buckets.items()}
+                if len(bucket) > max_per_anchor:
+                    bucket.pop()
+
+    output: dict[str, list[dict[str, Any]]] = {}
+    for finding_id in all_ids:
+        selected: list[dict[str, Any]] = []
+        taken: set[str] = set()
+        rows = sorted((at, entries) for (fid, at), entries in per_anchor.items()
+                      if fid == finding_id)
+        # Include one event per evidenced timestamp, when possible (<=12 anchors).
+        for _, entries in rows:
+            if len(selected) >= _MAX_CONTEXT:
+                break
+            for _, entity in entries:
+                ref = entity["evidence_lines"]
+                if ref not in taken:
+                    taken.add(ref)
+                    selected.append(entity)
+                    break
+        # Fill remaining places using meaningful categories first, then distance.
+        remaining = sorted((item for _, entries in rows for item in entries),
+                           key=lambda item: item[0])
+        for _, entity in remaining:
+            if len(selected) >= _MAX_CONTEXT:
+                break
+            ref = entity["evidence_lines"]
+            if ref not in taken:
+                taken.add(ref)
+                selected.append(entity)
+        output[finding_id] = selected
+    return output
 
 
 def build_packet(case_dir: Path, manifest: dict[str, Any],
@@ -147,6 +179,10 @@ def build_packet(case_dir: Path, manifest: dict[str, Any],
     nearby = _context_events(case_dir, manifest, records)
     for item in records:
         item["nearby_sanitized_events"] = nearby.get(item["finding_id"], [])
+        item["context_anchor_count"] = len({
+            ref["occurred_at"] for ref in item.get("evidence", [])[:12]
+            if isinstance(ref.get("occurred_at"), str)
+        })
 
     source_list = []
     for entry in manifest.get("files", []):
@@ -271,10 +307,35 @@ def to_markdown(packet: dict[str, Any]) -> str:
     for job, values in stats["job_run_counts"].items():
         lines.append(f"- Job {job} 실행/완료/미완료/작업대상: "
                      f"{values['runs']}/{values['completed']}/{values['incomplete']}/{values['target_count_total']}")
+    def fmt(value: Any) -> str:
+        if value is None:
+            return "미확인"
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "미확인"
+        return f"{value:,g}"
+
+    lines.extend([
+        "", "### Job 처리시간 분포 (초)", "",
+        "| Job | 완료 표본 | 평균 | P50 | P95 | 최대 | 절대 기준 초과 횟수 |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ])
     for job, data in stats["job_statistics"].items():
-        lines.append(f"- Job {job}: {data}")
+        lines.append(
+            f"| {job} | {fmt(data.get('samples'))} | {fmt(data.get('average'))} | "
+            f"{fmt(data.get('p50'))} | {fmt(data.get('p95'))} | "
+            f"{fmt(data.get('max_seconds'))} | {fmt(data.get('slow_above_absolute'))} |"
+        )
+    lines.extend([
+        "", "### DB SQL 처리시간 분포 (ms)", "",
+        "| 유형 | 실행 표본 | 평균 | P95 | 최대 | 절대 기준 초과 횟수 |",
+        "|---|---:|---:|---:|---:|---:|",
+    ])
     for kind, data in stats["sql_statistics"].items():
-        lines.append(f"- SQL 유형 {kind}: {data}")
+        lines.append(
+            f"| {kind} | {fmt(data.get('samples'))} | {fmt(data.get('average'))} | "
+            f"{fmt(data.get('p95'))} | {fmt(data.get('max_ms'))} | "
+            f"{fmt(data.get('slow_above_absolute'))} |"
+        )
     lines.extend(["", "## 3. 탐지된 이상 징후와 조사 근거", ""])
     if not packet["findings"]:
         lines.append("등록된 이상 징후가 없습니다. 정상 상태임을 보증하지 않습니다.")
@@ -305,7 +366,8 @@ def to_markdown(packet: dict[str, Any]) -> str:
                 f"{evidence['날짜 근거']} | {evidence['로그상 시작']} | "
                 f"{evidence['계산상 시작']} | {evidence['시작시각 주의']} |"
             )
-        lines.extend(["", "같은 시간대의 비식별 이벤트 (대표 근거 ±120초, 최대 16건; 시간상 근접만 의미하고 인과관계 미확정):"])
+        lines.extend(["", "같은 시간대의 비식별 이벤트 (근거 표본시각 최대 12곳에 각각 ±120초, 총 최대 16건; 인과관계 미확정):",
+                      f"- 조사에 사용한 기준 시각: {item.get('context_anchor_count', 0)}개"])
         for event in item["nearby_sanitized_events"]:
             lines.append(
                 f"- {event['recorded_at']} · {event['log_file']} · {event['event_type']}"
