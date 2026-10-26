@@ -4,7 +4,7 @@ AI-authored files always enter inbox as drafts. Only an explicit human approval
 action moves a reviewed revision to approved. JSON Schema validation != truth.
 """
 from __future__ import annotations
-from .fs_compat import private_file_mode
+from .permissions import private_fd, private_path
 
 from datetime import datetime
 import json
@@ -84,7 +84,7 @@ def import_case(data: bytes, *, root: Path = ROOT) -> dict[str, Any]:
     dest = inbox / name
     # Prefer canonical serialization; no sender-controlled filename or path.
     with dest.open("x", encoding="utf-8") as handle:
-        private_file_mode(handle.fileno(), 0o600)
+        private_fd(handle.fileno())
         json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
     return dict(verdict.summary, storage_state="inbox")
@@ -154,7 +154,7 @@ def approve_case(case_id: str, revision: int, *, confirm_reviewed: bool = False,
     if any(i > revision for i in older):
         raise ValueError("더 높은 수정 버전이 이미 등록되어 있습니다.")
     with dest.open("xb") as handle:
-        private_file_mode(handle.fileno(), 0o600)
+        private_fd(handle.fileno())
         handle.write(serialized + b"\n")
     src.unlink()
     return {"case_id":case_id,"revision":revision,"review_state":"approved",

@@ -4,10 +4,10 @@ No SQL text, transport payload, identifiers, credentials or raw exception lines
 are written to derived event files. Source files remain unchanged.
 """
 from __future__ import annotations
-from .fs_compat import private_file_mode
+from .permissions import private_fd, private_path
 
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date
 import hashlib
 import heapq
 import json
@@ -22,6 +22,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from .case_contract import load_schema
 from .parsers import parse_by_kind
 from .parsers.common import ClockResolver
+from .time_utils import job_time_fields
 
 INPUT_NAME = re.compile(r"^[a-z0-9_]+\.(?:log|txt|ini)$")
 CASE_NAME = re.compile(r"^analysis_[a-f0-9]{32}$")
@@ -87,7 +88,7 @@ def _sort_key(event: dict[str, Any]) -> tuple[Any, ...]:
 
 def _write_jsonlines(path: Path, events: list[dict[str, Any]]) -> None:
     with path.open("x", encoding="utf-8") as stream:
-        private_file_mode(stream.fileno(), 0o600)
+        private_fd(stream.fileno())
         for event in events:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
 
@@ -101,7 +102,7 @@ def _read_jsonlines(path: Path) -> Iterator[dict[str, Any]]:
 def _merge_many(paths: list[Path], output: Path) -> None:
     iterators = [_read_jsonlines(p) for p in paths]
     with output.open("x", encoding="utf-8") as stream:
-        private_file_mode(stream.fileno(), 0o600)
+        private_fd(stream.fileno())
         for event in heapq.merge(*iterators, key=_sort_key):
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
     for generator in iterators:
@@ -139,7 +140,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     staging = Path(staging_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            private_file_mode(stream.fileno(), 0o600)
+            private_fd(stream.fileno())
             json.dump(payload, stream, ensure_ascii=False, sort_keys=True, indent=2)
             stream.write("\n")
         os.replace(staging, path)
@@ -220,7 +221,7 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
     result: dict[str, Any]
     with tempfile.TemporaryDirectory(prefix=".stage2_", dir=case_dir) as temp_name:
         temp_dir = Path(temp_name)
-        os.chmod(temp_dir, 0o700)
+        private_path(temp_dir, directory=True)
         chunks: list[Path] = []
         batch: list[dict[str, Any]] = []
 
@@ -259,28 +260,6 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
             for raw in parse_by_kind(source["kind"], _read_numbered(origin, codec, file_stats)):
                 parsed_events += 1
                 occurred_at, quality = clock_resolver.normalize(raw.clock)
-                # The Agent's written start/end clocks are distinct from the event timestamp.
-                # An ambiguous clock without an anchor remains clock-only, never fabricated.
-                if raw.kind == "job_run":
-                    start_clock = raw.data.get("start_clock")
-                    if start_clock and occurred_at:
-                        try:
-                            end_dt = datetime.fromisoformat(occurred_at)
-                            start_dt = end_dt.replace(
-                                hour=int(start_clock[0:2]), minute=int(start_clock[3:5]),
-                                second=int(start_clock[6:8]),
-                                microsecond=int(start_clock[9:12]) * 1000,
-                            )
-                            if start_dt > end_dt and (start_dt - end_dt) >= timedelta(hours=16):
-                                start_dt -= timedelta(days=1)
-                            raw.data["start_at"] = (
-                                start_dt.isoformat(timespec="milliseconds")
-                                if start_dt <= end_dt else None
-                            )
-                        except (ValueError, IndexError):
-                            raw.data["start_at"] = None
-                    else:
-                        raw.data["start_at"] = None
                 entry = {
                     "schema_version": "1.0",
                     "event_id": f"{source['file_id']}_{raw.start_line:09d}",
@@ -295,6 +274,11 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
                     "status": raw.status,
                     "details": raw.data,
                 }
+                entry["time_date_source"] = ("filename_hint" if source["date_hint"] else
+                                             "reference_date" if manifest["reference_date"] else
+                                             "unknown")
+                if raw.kind == "job_run":
+                    entry["details"] = {**raw.data, **job_time_fields(occurred_at, raw.data)}
                 _update_metrics(metrics, entry)
                 batch.append(entry)
                 if len(batch) >= CHUNK_SIZE:
@@ -340,7 +324,7 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
             raise ValueError("출력 경로가 심볼릭 링크입니다.")
         # TemporaryDirectory is private; replacing an existing safe file is atomic.
         sorted_chunks.replace(pending_events)
-        os.chmod(pending_events, 0o600)
+        private_path(pending_events)
 
         result = {
             "schema_version": "1.0",
@@ -357,7 +341,7 @@ def analyze_case(case_dir: Path) -> dict[str, Any]:
         if pending_json.is_symlink():
             raise ValueError("출력 임시 경로가 심볼릭 링크입니다.")
         with pending_json.open("w", encoding="utf-8") as stream:
-            private_file_mode(stream.fileno(), 0o600)
+            private_fd(stream.fileno())
             json.dump(result, stream, ensure_ascii=False, indent=2, sort_keys=True)
             stream.write("\n")
         pending_events.replace(case_dir / "events.jsonl")

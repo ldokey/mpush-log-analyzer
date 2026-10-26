@@ -1,6 +1,6 @@
 """Local-only private stage-1 intake storage. No original customer names in JSON."""
 from __future__ import annotations
-from .fs_compat import private_file_mode
+from .permissions import private_fd, private_path
 
 from collections import defaultdict
 from datetime import date, datetime
@@ -115,7 +115,7 @@ def save_intake(
 
     # User-provided paths are never used for filenames, and workspace is not linked.
     workspace_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    os.chmod(workspace_root, 0o700)
+    private_path(workspace_root, directory=True)
     case_dir = workspace_root / manifest["analysis_id"]
     case_dir.mkdir(mode=0o700)
     raw_dir = case_dir / "raw"
@@ -124,10 +124,10 @@ def save_intake(
         for storage_name, data in planned:
             dest = raw_dir / storage_name
             with dest.open("xb") as stream:
-                private_file_mode(stream.fileno(), 0o600)
+                private_fd(stream.fileno())
                 stream.write(data)
         with (case_dir / "manifest.json").open("x", encoding="utf-8") as stream:
-            private_file_mode(stream.fileno(), 0o600)
+            private_fd(stream.fileno())
             json.dump(manifest, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
     except Exception:

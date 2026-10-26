@@ -212,15 +212,30 @@ def find_correlated_events(case_dir: Path, manifest: dict[str, Any],
     if not isinstance(center, str):
         return []
     target = datetime.fromisoformat(center)
-    results: list[dict[str, Any]] = []
     aliases = source_map(manifest)
+    # Bounded closest matches: a dense healthcheck interval must not displace
+    # the exact incident or an exception because it appeared later in the log.
+    priorities = {
+        "log_error": 0, "job_running_skip": 1, "job_run": 2,
+        "sql_execution": 3, "cns_response": 4, "healthcheck_result": 6,
+    }
+    ranked: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     for event in events_iter(case_dir, manifest):
         stamp = event.get("occurred_at")
         if not isinstance(stamp, str):
             continue
         moment = datetime.fromisoformat(stamp)
-        if abs((moment - target).total_seconds()) <= window_seconds:
-            results.append(_display_event(event, aliases))
-            if len(results) >= limit:
-                break
-    return results
+        offset = (moment - target).total_seconds()
+        if abs(offset) > window_seconds:
+            continue
+        rank = (abs(offset), priorities.get(event.get("event_type"), 5),
+                str(event.get("file_id")), int(event.get("line_start", 0)))
+        if len(ranked) >= limit and rank >= ranked[-1][0]:
+            continue
+        preview = _display_event(event, aliases)
+        preview["시각차(초)"] = round(offset, 3)
+        ranked.append((rank, preview))
+        ranked.sort(key=lambda item: item[0])
+        if len(ranked) > limit:
+            ranked.pop()
+    return [event for _, event in ranked]

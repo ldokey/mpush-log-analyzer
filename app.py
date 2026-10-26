@@ -7,6 +7,7 @@ from pathlib import Path
 import streamlit as st
 
 from dashboard_ui import render_dashboard, render_exports
+from mpush_analyzer.finding_view_v2 import summary_row
 from mpush_analyzer.dashboard_data import read_result_bundle
 from mpush_analyzer.lifecycle import list_cases, delete_case
 from mpush_analyzer.runner import run_complete_analysis
@@ -15,7 +16,6 @@ from mpush_analyzer.case_library import import_case, list_case_summaries, approv
 from mpush_analyzer.config_ini import parse_agent_ini
 from mpush_analyzer.intake import KINDS, Upload, decode_upload, inspect_uploads
 from mpush_analyzer.storage import save_intake
-from mpush_analyzer.finding_ui import render_finding_review
 
 APP_ROOT = Path(__file__).resolve().parent
 
@@ -156,9 +156,17 @@ with tab_upload:
                         col_b.metric("Job 종류", len(metrics["job_runs"]))
                         col_c.metric("DB 실행 기록", metrics["db_executions"]["runs"])
                         st.write("분석 범위:", result["analysis_status"])
-                        render_finding_review(
-                            case_dir, manifest, result, case_matches, namespace="new_upload"
-                        )
+                        if result.get("findings"):
+                            st.markdown("**감지한 이상 징후 (대표 로그 시각·수치·근거)**")
+                            st.dataframe(
+                                [summary_row(item, manifest) for item in result["findings"]],
+                                hide_index=True, use_container_width=True
+                            )
+                        else:
+                            st.info("현재 규칙에서 감지된 이상 징후는 없습니다.")
+                        st.caption("위 '분석 대시보드' 탭에서 근거를 선택하면 상세 설명과 주변 로그가 표시됩니다.")
+                        if result.get("limitations"):
+                            st.warning("분석 범위 또는 로그 완전성에 제한이 있습니다. 대시보드에서 확인해 주세요.")
     else:
         st.caption("업로드한 파일은 작업 생성 버튼을 누르기 전까지 별도 분석 작업으로 저장하지 않습니다.")
 
@@ -261,7 +269,7 @@ with tab_report:
             except Exception:
                 st.warning("결과 파일이 없거나 검증에 실패했습니다. 위 버튼으로 다시 분석해 주세요.")
             else:
-                render_exports(result, matches, manifest)
+                render_exports(result, matches, manifest, case_dir=case_dir)
                 with st.expander("분석에 사용한 로그 범위"):
                     st.dataframe([{
                         "파일": f["file_id"], "종류": f["kind"], "완전성": f["completeness"],

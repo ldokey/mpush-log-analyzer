@@ -1,6 +1,6 @@
 """Deterministic, privacy-minimized Korean reports, using only allowlisted values."""
 from __future__ import annotations
-from .fs_compat import private_file_mode
+from .permissions import private_fd, private_path
 from html import escape as html_escape
 import json
 import os
@@ -9,7 +9,7 @@ import re
 import tempfile
 from typing import Any
 from .pipeline import _get_manifest
-from .finding_view import finding_detail
+from .finding_view_v2 import details as finding_details, file_label
 
 SIGNAL_LABELS = {
     "SEND_JOB_DELAY": "발송 Job 처리시간 증가",
@@ -105,17 +105,20 @@ def report_data(result: dict[str, Any], matches: dict[str, Any],
         code = f.get("signal_code")
         if code not in SIGNAL_LABELS:
             continue
-        refs = [_position(r) for r in f.get("evidence_refs", [])[:5]]
+        presentation = finding_details(f, manifest)
+        refs = [f"{row['근거 파일']} {row['줄']}행 · {row['근거시각']}"
+                for row in presentation["evidence"][:5]]
         statement = f.get("statement_type") if f.get("statement_type") in {"observed", "indicator", "hypothesis"} else "indicator"
         measure = f.get("measure") or {}
         numeric_measure = {
             k: v for k, v in sorted(measure.items())
             if k in {"max_seconds", "max_laptime_ms", "max_stage_seconds", "max_gap_seconds",
-                     "tail_gap_seconds", "above_absolute_count", "above_threshold_count",
+                     "tail_gap_seconds", "healthcheck_tail_seconds", "job_tail_seconds",
+                     "baseline_seconds", "estimated_interval_seconds",
+                     "above_absolute_count", "above_threshold_count", "window_seconds",
                      "threshold_seconds", "threshold_ms", "gap_count", "observed_count", "count"}
             and isinstance(v, (int, float)) and not isinstance(v, bool)
         }
-        detail = finding_detail(f, manifest)
         findings.append({
             "signal": code,
             "title": SIGNAL_LABELS[code],
@@ -123,15 +126,11 @@ def report_data(result: dict[str, Any], matches: dict[str, Any],
             "severity": f.get("severity") if f.get("severity") in {"warning", "info"} else "info",
             "measure": numeric_measure,
             "evidence_locations": refs,
-            "representative_at": detail["representative_at"],
-            "evidence_time_range": detail["evidence_range"],
-            "evidence": [{
-                "when":e["시각"],"file":e["로그 파일"],"position":e["근거"],
-                "job_start_at":e["start_at"]
-            } for e in detail["evidence"]],
-            "interpretation_limit": detail["limitation"],
-            "next_check": detail["next_check"],
-            "sampling_note": detail["sampling_note"],
+            "time": presentation["time"],
+            "observation": presentation["summary"],
+            "explanation": presentation["why_flagged"],
+            "analysis_detail": presentation["analysis_detail"],
+            "next_check": presentation["next_check"],
         })
     related = []
     for case in matches.get("matched_cases", [])[:10]:
@@ -148,7 +147,11 @@ def report_data(result: dict[str, Any], matches: dict[str, Any],
                 ) if sig in SIGNAL_LABELS
             ],
         })
-    scope = [_scope_value(x) for x in manifest.get("files", [])]
+    scope = []
+    for source in manifest.get("files", []):
+        item = _scope_value(source)
+        item["display_filename"] = file_label(str(source.get("file_id")), manifest)
+        scope.append(item)
     collected = manifest.get("collected_at")
     capture_time = (collected if isinstance(collected, str) and
                     re.fullmatch(r"\d{4}-\d{2}-\d{2}T[\d:.]+[+-]\d{2}:\d{2}", collected) else None)
@@ -187,11 +190,11 @@ def to_markdown(report: dict[str, Any]) -> str:
         f"- 분석 범위: {report['analysis_status']}",
         f"- 로그 수집 시각: {report['capture_time'] or '미입력'}", "",
         "## 1. 분석 자료", "",
-        "| 파일 ID | 유형 | 원본 완전성 | 기록 시작 | 기록 종료 |",
+        "| 안전한 파일명 (자료 ID) | 유형 | 원본 완전성 | 기록 시작 | 기록 종료 |",
         "|---|---|---|---|---|",
     ]
     for row in report["source_files"]:
-        lines.append(f"| {row['file_id']} | {row['kind']} | {row['completeness']} | {row['first'] or '-'} | {row['last'] or '-'} |")
+        lines.append(f"| {row['display_filename']} | {row['kind']} | {row['completeness']} | {row['first'] or '-'} | {row['last'] or '-'} |")
     stats = report["statistics"]
     lines.extend([
         "", "## 2. 처리 현황", "",
@@ -212,16 +215,15 @@ def to_markdown(report: dict[str, Any]) -> str:
         refs = "; ".join(f["evidence_locations"]) or "근거 위치 미확인"
         lines.extend([
             f"{i}. **{f['title']}** ({f['signal']}, {f['statement_type']})",
-            f"   - 대표 발생시각: {f['representative_at']}",
+            f"   - 시간 의미: {f['time']['기준']}",
+            f"   - 기준 시작: {f['time']['시작']} / 기준 끝: {f['time']['끝']}",
+            f"   - 시간 해석 한계: {f['time']['신뢰 안내']}",
+            f"   - 관측 사실: {f['observation']}",
+            f"   - 상세: {f['analysis_detail'] or '-'}",
+            f"   - 탐지 이유: {f['explanation']}",
             f"   - 관측 수치: {nums or '별도 수치 없음'}",
-            f"   - 근거: {refs}",
-        ])
-        for ev in f["evidence"]:
-            lines.append(f"   - {ev['when']} / {ev['file']} / {ev['position']}")
-        lines.extend([
-            f"   - 해석 한계: {f['interpretation_limit']}",
+            f"   - 원본 근거: {refs}",
             f"   - 추가 확인: {f['next_check']}",
-            f"   - 표본 제한: {f['sampling_note']}",
         ])
     lines.extend(["", "## 4. 관련 기존 사례", ""])
     if report["related_cases"]:
@@ -253,7 +255,7 @@ def to_html(report: dict[str, Any]) -> str:
         )
         return "<div class='tablewrap'><table><thead><tr>" + head + "</tr></thead><tbody>" + body + "</tbody></table></div>"
 
-    scopes = [[f["file_id"], f["kind"], f["completeness"],
+    scopes = [[f["display_filename"], f["kind"], f["completeness"],
                f["first"] or "-", f["last"] or "-"] for f in report["source_files"]]
     stats = report["statistics"]
     jobs = [[x["job"], _safe_number(x["completed_executions"]),
@@ -268,10 +270,14 @@ def to_html(report: dict[str, Any]) -> str:
             " <span class='code'>" + h(f["signal"]) + "</span></h3>"
             "<p class='muted'>판정: " + h(f["statement_type"]) +
             " · 관측 수치: " + h(nums or "별도 수치 없음") +
-            "</p><p>대표 발생시각: " + h(f["representative_at"]) +
-            "</p><p>원본 근거: " + h(refs) +
-            "</p><p>판단 한계: " + h(f["interpretation_limit"]) +
-            "</p><p>추가 확인: " + h(f["next_check"]) + "</p></article>"
+            "</p><p class='muted'>시간: " + h(f["time"]["기준"]) + " · " +
+            h(f["time"]["시작"]) + " → " + h(f["time"]["끝"]) + "</p>"
+            "<p>" + h(f["observation"]) + "</p>"
+            "<p>" + h(f["analysis_detail"]) + "</p>"
+            "<p>탐지 이유: " + h(f["explanation"]) + "</p>"
+            "<p>원본 근거: " + h(refs) + "</p>"
+            "<p>추가 확인: " + h(f["next_check"]) + "</p>"
+            "<p class='muted'>" + h(f["time"]["신뢰 안내"]) + "</p></article>"
         )
     cases = [
         "<li>" + h(x["case_id"]) + " r" + h(x["revision"]) +
@@ -318,7 +324,7 @@ def to_html(report: dict[str, Any]) -> str:
         " · 분석 상태: " + h(report["analysis_status"]) +
         " · 수집 시각: " + h(report["capture_time"] or "미입력") + "</p></header>"
         "<section><h2>01. 분석 자료</h2>" +
-        table(["파일 ID","종류","원본 완전성","기록 시작","기록 종료"], scopes) +
+        table(["파일명 (자료 ID)","종류","원본 완전성","기록 시작","기록 종료"], scopes) +
         "</section><section><h2>02. 처리 현황</h2>"
         "<div class='metrics'><div class='metric'>추출 이벤트<strong>" +
         h(_safe_number(stats["events_extracted"])) +
@@ -362,7 +368,7 @@ def save_exports(case_dir: Path, exports: dict[str, bytes]) -> None:
         tmp = Path(temp_name)
         try:
             with os.fdopen(fd,"wb") as writer:
-                private_file_mode(writer.fileno(),0o600)
+                private_fd(writer.fileno())
                 writer.write(payload)
             os.replace(tmp,path)
         finally:
