@@ -2,7 +2,7 @@
 
 ## Baseline inspected before editing
 
-- Remote project: `/path/to/mpush-log-analyzer`
+- Remote project: `mpush-log-analyzer`
 - Base branch: `main`, commit `a690274`; clean worktree at inspection.
 - Previous work `a451df4` already provided readable finding evidence and AI exports.
 - V2 integration `a690274` was already committed and present on `main`.
@@ -91,3 +91,19 @@ AI sharing remains a deliberate user action and requires a final privacy review.
 - Streamlit localhost health returned HTTP 200; private browser screenshot service was unavailable (429). No pixel-perfect visual verification claimed.
 - Temporary synthetic dashboard case removed and localhost test server shut down.
 - Existing production agent source and customer's data were not modified.
+
+## Follow-up correction: AI evidence provenance (V3.1 candidate)
+
+This isolated follow-up preserves the V3 UI and detection rules. Source evidence
+rows excluded for invalid file IDs or line ranges must also be excluded from
+the AI timestamp pairing. The old pair-by-position algorithm could
+attach an excluded ref's timestamp to a different displayed line.
+
+- One validation path determines the first 15 eligible evidence references for
+  both the human-readable table and AI export.
+- AI occurred_at accepts parsed ISO datetimes only; unrecognized free-text
+  values are represented by null, never echoed or used as nearby-event anchors.
+- A synthetic regression injects an invalid source ID and malformed timestamp,
+  verifies file/line/time identity, and checks Markdown/JSON for accidental leaks.
+- No parser rules, runtime Agent, stored event schema, external API, or public
+  GitHub repository is changed by this candidate.

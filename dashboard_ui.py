@@ -234,8 +234,12 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
         st.caption("보관된 근거 줄번호가 없습니다.")
 
     st.markdown("**같은 시각에 관측된 다른 로그**")
-    first_ref = item.get("evidence_refs", [{}])[0] if item.get("evidence_refs") else {}
-    other = find_correlated_events(case_dir, manifest, first_ref, window_seconds=120, limit=80)
+    # Correlate with the selected, validated evidence row, not always the
+    # first raw ref. The latter can belong to a different occurrence/time.
+    from mpush_analyzer.finding_view_v2 import _valid_evidence_refs
+    valid_refs = _valid_evidence_refs(item)
+    selected_ref = valid_refs[max(0, min(_table_selection(evidence_table), len(valid_refs) - 1))] if valid_refs else {}
+    other = find_correlated_events(case_dir, manifest, selected_ref, window_seconds=120, limit=80)
     if other:
         converted = []
         for event in other:
@@ -352,21 +356,9 @@ def _render_timeline(case_dir: Path, manifest: dict, result: dict) -> None:
 
 def render_dashboard(case_dir: Path, manifest: dict,
                      result: dict, matches: dict) -> None:
-    st.subheader("MPushAgent 장애 분석 대시보드")
-    st.caption("시각·원본 위치·탐지 이유를 연결해 확인합니다. 원인 확정이 아닌 로그 진단 결과입니다.")
-    if result.get("analysis_status") != "complete":
-        st.warning("입력 로그가 불완전하거나 기준 날짜가 확인되지 않았습니다. 일부 통계·시간 해석은 제한됩니다.")
-    render_metrics(result, matches)
-    _render_incident_snapshot(result, manifest)
-    tab_find, tab_timeline, tab_stats = st.tabs([
-        "이상 징후·근거", "시간대별 로그", "처리 통계·파일"
-    ])
-    with tab_find:
-        _render_findings(case_dir, manifest, result, matches)
-    with tab_timeline:
-        _render_timeline(case_dir, manifest, result)
-    with tab_stats:
-        _render_overview_tables(result, manifest)
+    """Route to the six-screen workbench; legacy evidence/report helpers stay."""
+    from mpush_analyzer.workbench_ui import render_workbench
+    render_workbench(case_dir, manifest, result, matches)
 
 
 def render_exports(result: dict, matches: dict, manifest: dict, case_dir: Path | None = None) -> None:

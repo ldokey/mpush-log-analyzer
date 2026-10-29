@@ -198,7 +198,10 @@ def test_streamlit_dashboard_synthetic_case(tmp_path: Path, monkeypatch):
     test=AppTest.from_file(str(Path(__file__).resolve().parents[1]/"app.py"),default_timeout=35).run()
     assert len(test.exception)==0, [str(x.message) for x in test.exception]
     labels=[x.value for x in test.subheader]
-    assert any("장애 분석 대시보드" in x for x in labels)
+    assert any("로그 분석 워크벤치" in x for x in labels)
+    navigation=next(x for x in test.radio if x.label=="분석 메뉴")
+    test=navigation.set_value("이상·오류 분석").run()
+    assert len(test.exception)==0, [str(x.message) for x in test.exception]
     assert any("이상 징후" in element.value for element in test.markdown)
 
 

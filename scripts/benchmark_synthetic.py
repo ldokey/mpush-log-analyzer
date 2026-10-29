@@ -11,6 +11,7 @@ import tempfile
 from time import perf_counter
 
 from mpush_analyzer.dashboard_data import read_result_bundle, summarize_events
+from mpush_analyzer.workbench_data import EventQuery, query_events
 from mpush_analyzer.intake import Upload, inspect_uploads
 from mpush_analyzer.runner import run_complete_analysis
 from mpush_analyzer.storage import save_intake
@@ -54,8 +55,17 @@ def main() -> int:
         manifest, _, _ = read_result_bundle(case_dir)
         overview = summarize_events(case_dir, manifest, page=1, page_size=100)
         query_time = perf_counter() - query_start
+        workbench_start = perf_counter()
+        oldest = query_events(case_dir, manifest, EventQuery(), page=3, page_size=50)
+        oldest_query_time = perf_counter() - workbench_start
+        latest_start = perf_counter()
+        latest = query_events(case_dir, manifest,
+                              EventQuery(sort="time_desc"), page=1, page_size=50)
+        latest_query_time = perf_counter() - latest_start
         count = result["metrics"]["events_total"]
         assert count == overview["total"] and count >= 10000
+        assert oldest["total"] == latest["total"] == count
+        assert len(oldest["rows"]) == len(latest["rows"]) == 50
         assert not matches["matched_cases"]
         assert len(overview["timeline"]) <= 1800
         assert all(exports[k] for k in ("report.json", "report.html", "report.md"))
@@ -69,7 +79,9 @@ def main() -> int:
             "intake_seconds": round(intake_time, 3),
             "full_analysis_seconds": round(parse_time, 3),
             "dashboard_query_seconds": round(query_time, 3),
-            "total_seconds": round(intake_time+parse_time+query_time, 3),
+            "workbench_ascending_page_seconds": round(oldest_query_time, 3),
+            "workbench_latest_page_seconds": round(latest_query_time, 3),
+            "total_seconds": round(intake_time+parse_time+query_time+oldest_query_time+latest_query_time, 3),
             "timeline_buckets": len(overview["timeline"]),
             "peak_process_memory_mb": round(peak_mb, 1),
             "privacy": "no customer files used, temporary directory removed",

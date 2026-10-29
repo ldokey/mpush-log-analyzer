@@ -4,6 +4,7 @@ import pytest
 
 from mpush_analyzer.intake import (
     Upload, inspect_uploads, decode_upload, MAX_SINGLE_FILE,
+    MAX_TOTAL_FILES_BYTES, MAX_FILE_COUNT, validate_upload_limits,
 )
 
 
@@ -66,7 +67,6 @@ def test_cp949_and_broken_encoding():
 @pytest.mark.parametrize("item", [
     Upload("file.zip", b"a"),
     Upload("file.log", b"\x00bad"),
-    Upload("file.log", b"a" * (MAX_SINGLE_FILE + 1)),
 ])
 def test_rejects_bad_inputs(item):
     with pytest.raises(ValueError):
@@ -90,3 +90,49 @@ def test_dedup_does_not_confuse_different_content():
     a, b = inspect_uploads(arr)
     assert a.duplicate_of is None and b.duplicate_of is None
     assert a.sha256 != b.sha256
+
+
+def test_large_dbwrap_capacity_boundaries_without_allocating_hundreds_of_megabytes():
+    mib = 1024 * 1024
+    assert MAX_SINGLE_FILE == 350 * mib
+    assert MAX_TOTAL_FILES_BYTES == 600 * mib
+    assert MAX_FILE_COUNT == 30
+    # A 300MiB dbwrap.log plus 250MiB of companion logs must be accepted.
+    validate_upload_limits([300 * mib, 250 * mib])
+    validate_upload_limits([MAX_SINGLE_FILE])
+    validate_upload_limits([MAX_TOTAL_FILES_BYTES // 2] * 2)
+
+    with pytest.raises(ValueError, match="350MiB"):
+        validate_upload_limits([MAX_SINGLE_FILE + 1])
+    with pytest.raises(ValueError, match="600MiB"):
+        validate_upload_limits([MAX_SINGLE_FILE, MAX_SINGLE_FILE])
+    with pytest.raises(ValueError, match="30"):
+        validate_upload_limits([1] * 31)
+    with pytest.raises(ValueError, match="크기"):
+        validate_upload_limits([-1])
+    with pytest.raises(ValueError, match="개수"):
+        validate_upload_limits([])
+
+
+def test_intake_enforces_file_limit_before_inspection_or_hashing():
+    class FakeHugeContent:
+        """Size-only stub; any attempt to access file bytes is a test failure."""
+        def __len__(self):
+            return MAX_SINGLE_FILE + 1
+
+        def __getitem__(self, _index):
+            raise AssertionError("oversized files must be rejected before reading")
+
+    with pytest.raises(ValueError, match="350MiB"):
+        inspect_uploads([Upload("dbwrap.log", FakeHugeContent())])
+
+
+
+def test_streamlit_file_size_setting_matches_backend():
+    """Keep Streamlit's HTTP per-file cap synchronized with intake's byte cap."""
+    from pathlib import Path
+    import tomllib
+
+    config = Path(__file__).resolve().parents[1] / ".streamlit/config.toml"
+    parsed = tomllib.loads(config.read_text(encoding="utf-8"))
+    assert parsed["server"]["maxUploadSize"] * 1024 * 1024 == MAX_SINGLE_FILE

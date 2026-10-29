@@ -14,7 +14,10 @@ from mpush_analyzer.runner import run_complete_analysis
 from mpush_analyzer.case_contract import validate_case_json
 from mpush_analyzer.case_library import import_case, list_case_summaries, approve_case, read_case_draft
 from mpush_analyzer.config_ini import parse_agent_ini
-from mpush_analyzer.intake import KINDS, Upload, decode_upload, inspect_uploads
+from mpush_analyzer.intake import (
+    KINDS, MAX_FILE_COUNT, MAX_SINGLE_FILE, MAX_TOTAL_FILES_BYTES,
+    Upload, decode_upload, inspect_uploads, validate_upload_limits,
+)
 from mpush_analyzer.storage import save_intake
 
 APP_ROOT = Path(__file__).resolve().parent
@@ -51,7 +54,12 @@ with tab_upload:
     st.subheader("파일 업로드")
     st.write("Agent 하나의 로그를 선택하세요. debug, info, job, dbwrap, err 및 agent.ini를 여러 개 동시에 업로드할 수 있습니다.")
     st.caption("서로 다른 서버 또는 A1/A2 로그는 별도 분석 작업으로 생성하세요. Agent 동일성은 자동 검증되지 않습니다.")
-    st.info("원본 로그에는 개인·인증정보가 포함될 수 있습니다. 외부 서버로 전송하지 않고 이 Mac 안에서만 처리하며, 분석 작업 생성 시 접근 제한된 로컬 workspace/raw에 보관합니다.")
+    st.caption(
+        f"파일당 최대 {MAX_SINGLE_FILE // 1024**2}MiB · 전체 최대 "
+        f"{MAX_TOTAL_FILES_BYTES // 1024**2}MiB · 최대 {MAX_FILE_COUNT}개 "
+        "(agent.ini 최대 2MiB). 300MB 이상 로그는 메모리·디스크와 분석 시간이 더 필요합니다."
+    )
+    st.info("원본 로그에는 개인·인증정보가 포함될 수 있습니다. 외부 서버로 전송하지 않고 이 PC 안에서만 처리하며, 분석 작업 생성 시 접근 제한된 로컬 workspace/raw에 보관합니다.")
     user_files = st.file_uploader(
         "로그 또는 agent.ini 파일", type=["log", "txt", "ini"],
         accept_multiple_files=True, key="log_files",
@@ -69,8 +77,18 @@ with tab_upload:
         help="마지막 로그 발생 시각과 로그 압축·수집 시각은 서로 다릅니다."
     )
 
-    prepared: list[Upload] = []
+    # Check metadata first: do not materialize hundreds of MiB of uploaded
+    # bytes when the file count, single file or combined limit is exceeded.
+    upload_limits_ok = True
     if user_files:
+        try:
+            validate_upload_limits([uploaded.size for uploaded in user_files])
+        except ValueError as exc:
+            upload_limits_ok = False
+            st.error(str(exc))
+
+    prepared: list[Upload] = []
+    if user_files and upload_limits_ok:
         st.markdown("#### 파일별 설정")
         for index, f in enumerate(user_files, start=1):
             with st.expander(f"{index}. {f.name}", expanded=False):
@@ -167,7 +185,7 @@ with tab_upload:
                         st.caption("위 '분석 대시보드' 탭에서 근거를 선택하면 상세 설명과 주변 로그가 표시됩니다.")
                         if result.get("limitations"):
                             st.warning("분석 범위 또는 로그 완전성에 제한이 있습니다. 대시보드에서 확인해 주세요.")
-    else:
+    elif not user_files:
         st.caption("업로드한 파일은 작업 생성 버튼을 누르기 전까지 별도 분석 작업으로 저장하지 않습니다.")
 
 with tab_case:

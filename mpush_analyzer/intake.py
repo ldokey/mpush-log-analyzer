@@ -12,8 +12,10 @@ from .security import display_filename
 
 Kind = Literal["debug", "job", "dbwrap", "info", "err", "agent_ini", "unknown"]
 Completeness = Literal["full", "partial", "unknown"]
-MAX_SINGLE_FILE = 50 * 1024 * 1024
-MAX_TOTAL_FILES_BYTES = 200 * 1024 * 1024
+# Upload caps are in MiB. Streamlit's per-file limit is set separately in
+# .streamlit/config.toml; this check also protects direct/CLI callers.
+MAX_SINGLE_FILE = 350 * 1024 * 1024
+MAX_TOTAL_FILES_BYTES = 600 * 1024 * 1024
 MAX_FILE_COUNT = 30
 VALID_SUFFIXES = {".log", ".txt", ".ini"}
 KINDS = ("debug", "job", "dbwrap", "info", "err", "agent_ini", "unknown")
@@ -121,11 +123,20 @@ def _timestamp_hints(data: bytes) -> tuple[str | None, str | None]:
     )
 
 
-def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
-    if not uploads or len(uploads) > MAX_FILE_COUNT:
+def validate_upload_limits(sizes: list[int]) -> None:
+    """Validate sizes BEFORE the UI copies full UploadedFile content into RAM."""
+    if not sizes or len(sizes) > MAX_FILE_COUNT:
         raise ValueError(f"파일 개수는 1~{MAX_FILE_COUNT}개여야 합니다.")
-    if sum(len(x.content) for x in uploads) > MAX_TOTAL_FILES_BYTES:
-        raise ValueError("총 업로드 용량이 200MiB 제한을 초과했습니다.")
+    if any(type(size) is not int or size < 0 for size in sizes):
+        raise ValueError("업로드 파일 크기를 확인할 수 없습니다.")
+    if any(size > MAX_SINGLE_FILE for size in sizes):
+        raise ValueError(f"개별 파일이 {MAX_SINGLE_FILE // (1024 * 1024)}MiB 제한을 초과했습니다.")
+    if sum(sizes) > MAX_TOTAL_FILES_BYTES:
+        raise ValueError(f"총 업로드 용량이 {MAX_TOTAL_FILES_BYTES // (1024 * 1024)}MiB 제한을 초과했습니다.")
+
+
+def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
+    validate_upload_limits([len(item.content) for item in uploads])
     found: dict[str, int] = {}
     result: list[Inspected] = []
     for index, upload in enumerate(uploads, 1):
@@ -136,8 +147,6 @@ def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
             raise ValueError("잘못된 로그 완전성 값입니다.")
         if upload.override_kind is not None and upload.override_kind not in KINDS:
             raise ValueError("잘못된 수동 로그 유형입니다.")
-        if len(upload.content) > MAX_SINGLE_FILE:
-            raise ValueError("개별 파일이 50MiB 제한을 초과했습니다.")
         if b"\x00" in (upload.content[:4096] + upload.content[-4096:]):
             raise ValueError("텍스트 파일이 아닌 입력이 감지되었습니다.")
 

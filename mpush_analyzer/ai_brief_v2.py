@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 from .dashboard_data import _display_event, events_iter
-from .finding_view_v2 import details, file_label, format_timestamp
+from .finding_view_v2 import _valid_evidence_refs, details, file_label, format_timestamp
 
 _CONTEXT_WINDOW = 120
 _MAX_CONTEXT = 16
@@ -23,6 +23,18 @@ _EVENT_PRIORITY = {
     "sql_execution": 3, "cns_response": 4, "agent_exit": 5,
     "agent_started": 6, "healthcheck_result": 7, "healthcheck_request": 8,
 }
+
+
+def _safe_evidence_timestamp(value: Any) -> str | None:
+    """Normalize timestamps; never export free-text from an evidence field."""
+    if not isinstance(value, str) or len(value) > 48 or not any(
+        sep in value for sep in ("T", " ")
+    ):
+        return None
+    try:
+        return datetime.fromisoformat(value).isoformat()
+    except ValueError:
+        return None
 
 
 def _safe_lines(raw: Any) -> list[str]:
@@ -170,11 +182,14 @@ def build_packet(case_dir: Path, manifest: dict[str, Any],
     records: list[dict[str, Any]] = []
     for finding in findings:
         item = details(finding, manifest)
+        valid_refs = _valid_evidence_refs(finding)
+        # Invalid source rows are omitted by the UI. Pair with those *same*
+        # validated refs; zipping against all original refs corrupts provenance.
+        if len(item["evidence"]) != len(valid_refs):
+            raise ValueError("AI 근거의 파일·줄·시각 연결을 확인할 수 없습니다.")
         item["evidence"] = [{
-            **row, "occurred_at": (
-                ref.get("occurred_at") if isinstance(ref.get("occurred_at"), str) else None
-            )
-        } for row, ref in zip(item["evidence"], finding.get("evidence_refs") or [])]
+            **row, "occurred_at": _safe_evidence_timestamp(ref.get("occurred_at"))
+        } for row, ref in zip(item["evidence"], valid_refs)]
         records.append(item)
     nearby = _context_events(case_dir, manifest, records)
     for item in records:

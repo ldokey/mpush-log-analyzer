@@ -125,15 +125,28 @@ def _ref_time(ref: dict[str, Any]) -> str:
                             quality=ref.get("time_quality"), date_source=ref.get("time_date_source"))
 
 
-def evidence_rows(finding: dict[str, Any], manifest: dict[str, Any]) -> list[dict[str, Any]]:
-    result = []
-    for ref in finding.get("evidence_refs", [])[:15]:
+def _valid_evidence_refs(finding: dict[str, Any]) -> list[dict[str, Any]]:
+    """Apply the same source/line validation to UI rows and AI time anchors."""
+    valid = []
+    for ref in (finding.get("evidence_refs") or [])[:15]:
+        if not isinstance(ref, dict):
+            continue
         fid = ref.get("file_id")
         if not isinstance(fid, str) or not SAFE_REF.fullmatch(fid):
             continue
         start, end = ref.get("line_start"), ref.get("line_end")
-        if not (isinstance(start, int) and isinstance(end, int) and start > 0 and end >= start):
+        if (type(start) is not int or type(end) is not int
+                or start <= 0 or end < start):
             continue
+        valid.append(ref)
+    return valid
+
+
+def evidence_rows(finding: dict[str, Any], manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    result = []
+    for ref in _valid_evidence_refs(finding):
+        fid = ref["file_id"]
+        start, end = ref["line_start"], ref["line_end"]
         result.append({
             "근거시각": _ref_time(ref),
             "근거 파일": file_label(fid, manifest),

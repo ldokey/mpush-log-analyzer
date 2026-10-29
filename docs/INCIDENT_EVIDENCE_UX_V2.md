@@ -4,7 +4,7 @@ Project: MPushAgent Log Analyzer
 Goal: evidence-first investigator UI and privacy-safe AI handoff
 Base: a451df45182d2539f4403e4715b718ee75a03813
 Branch: feature/evidence-ux-integrated
-Worktree: /path/to/mpush-log-analyzer-ux-integrated
+Worktree: mpush-log-analyzer
 
 ## New investigator dashboard
 
@@ -62,7 +62,7 @@ Worktree: /path/to/mpush-log-analyzer-ux-integrated
 ## Run
 
 Mac:
-    cd /path/to/mpush-log-analyzer
+    cd mpush-log-analyzer
     bash scripts/run_local.sh
 
 Windows (PowerShell within project root):

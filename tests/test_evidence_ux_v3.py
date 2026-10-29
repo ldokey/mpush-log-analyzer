@@ -129,12 +129,17 @@ def test_streamlit_v3_is_readable_without_raw_findings_json(tmp_path: Path, monk
     test = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"),
                              default_timeout=40).run()
     assert not test.exception, [x.message for x in test.exception]
-    labels = [t.label for t in test.tabs]
-    assert "이상 징후·근거" in labels
-    assert "시간대별 로그" in labels
-    assert "처리 통계·파일" in labels
+    headings_first = [x.value for x in test.markdown]
+    assert any("로그 근거 한눈에 보기" in h for h in headings_first)
+    nav = next(x for x in test.radio if x.label == "분석 메뉴")
+    assert all(name in nav.options for name in (
+        "종합 현황", "전체 이벤트", "Job 분석", "DB 분석",
+        "이상·오류 분석", "수집·분석 품질",
+    ))
+    # The V3 evidence section now lives in the dedicated investigation screen.
+    test = nav.set_value("이상·오류 분석").run()
+    assert not test.exception, [x.message for x in test.exception]
     headings = [x.value for x in test.markdown]
-    assert any("로그 근거 한눈에 보기" in h for h in headings)
     assert any("탐지 기준 및 수치 비교" in h for h in headings)
     assert not any("탐지 근거 및 판단 한계" in h for h in headings)
 
@@ -203,3 +208,35 @@ def test_ai_context_guarantees_sparse_second_window_with_dense_first(tmp_path: P
     assert len(selected) <= 16
     assert any(x["evidence_lines"] == "file_02:100-100" for x in selected)
     assert any(x["log_file"].startswith("err_01.log") for x in selected)
+
+
+def test_ai_evidence_ref_alignment_and_timestamp_scrubbing(tmp_path: Path):
+    """A rejected source ref must not transfer its timestamp to another row."""
+    from copy import deepcopy
+    from mpush_analyzer.ai_brief_v2 import build_packet
+
+    case, manifest, result, matches = _synthetic_case(tmp_path)
+    modified = deepcopy(result)
+    finding = next(f for f in modified["findings"]
+                   if f["signal_code"] == "DB_SQL_DELAY")
+    good = finding["evidence_refs"][0].copy()
+    expected_time = datetime.fromisoformat(good["occurred_at"]).isoformat()
+    bad_source = {**good, "file_id": "PRIVATE_FAKE_FILE",
+                  "occurred_at": "PRIVATE_WRONG_ANCHOR"}
+    bad_line = {**good, "line_start": 0,
+                "occurred_at": "PRIVATE_ZERO_LINE"}
+    bad_timestamp = {**good, "occurred_at": "PRIVATE_INVALID_TIMESTAMP"}
+    finding["evidence_refs"] = [bad_source, bad_line, bad_timestamp, good]
+
+    packet = build_packet(case, manifest, modified, matches,
+                          only_finding_id=finding["finding_id"])
+    evidence = packet["findings"][0]["evidence"]
+    assert len(evidence) == 2
+    assert evidence[0]["occurred_at"] is None
+    assert evidence[1]["occurred_at"] == expected_time
+    assert evidence[1]["원본 ID"] == good["file_id"]
+    assert evidence[1]["시작행"] == good["line_start"]
+    assert packet["findings"][0]["context_anchor_count"] == 1
+    exports = build_ai_exports(case, manifest, modified, matches,
+                               only_finding_id=finding["finding_id"])
+    assert all(b"PRIVATE_" not in raw for raw in exports.values())

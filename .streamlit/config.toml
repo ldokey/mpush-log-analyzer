@@ -3,7 +3,7 @@ address = "127.0.0.1"
 headless = true
 enableCORS = true
 enableXsrfProtection = true
-maxUploadSize = 50
+maxUploadSize = 350
 
 [browser]
 gatherUsageStats = false

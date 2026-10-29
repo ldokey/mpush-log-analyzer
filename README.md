@@ -1,4 +1,4 @@
-# MPushAgent Log Analyzer — MVP 1.0 (4/4)
+# MPushAgent Log Analyzer — v4.0.0 (V3.1 included)
 
 독립 실행형 MPushAgent 3.2/3.3 로컬 로그 분석기입니다.
 기존 Agent, 고객사 DB, CNS 서버에 접속하거나 이를 수정하지 않습니다.
@@ -21,9 +21,12 @@
 - JSON은 저장·전달 형식이고 화면의 기본 표현은 표·문장·차트입니다.
 - 외부 AI 서비스로 자동 전송하지 않습니다. 전송 전에 담당자가 반드시 민감정보를 점검해야 합니다.
 
-Windows 3.13:
+Windows 10/11, Python 3.13 x64 — 압축 해제 후 프로젝트 루트에서 더블클릭:
 
-    scripts\run_windows.bat
+    START_WINDOWS.bat
+
+자세한 설치·실행·보안·오류 해결 안내: [Windows 실행 안내](docs/WINDOWS_QUICK_START.md)
+(기존 `scripts/run_windows.bat`는 유지되며 최상위 실행 파일이 이를 호출합니다.)
 
 - Windows에서는 `tzdata`를 requirements.txt 조건부 종속성으로 설치합니다.
 - Windows NTFS 권한은 현재 사용자/폴더 ACL에 따라 달라집니다. **공용 네트워크 공유 폴더에 고객사 원본을 넣지 마세요.**
@@ -31,7 +34,12 @@ Windows 3.13:
 
 ## 실행
 
-    git clone https://github.com/ldokey/mpush-log-analyzer.git
+공개 V4 소스 다운로드: https://github.com/ldokey/mpush-log-analyzer/releases/tag/v4.0.0
+
+Windows 사용자는 `START_WINDOWS.bat`를 더블클릭하세요. Python 3.13(64비트)이 필요하고 초기 패키지 설치에는 인터넷이 필요할 수 있습니다. 상세 절차와 주의사항은 [Windows 실행 안내](docs/WINDOWS_QUICK_START.md)를 참고하세요. 별도 독립형 `.exe` 배포는 아닙니다.
+
+Mac:
+
     cd mpush-log-analyzer
     python3.13 -m venv .venv
     .venv/bin/python -m pip install -r requirements-dev.txt
@@ -62,7 +70,7 @@ Mac 로컬 브라우저에서 http://127.0.0.1:8501 접속. 종료는 Ctrl+C.
 
 - ZIP 압축은 지원하지 않습니다. .log/.txt/.ini만 선택할 수 있습니다.
 - 파일별 전체/일부/확인 불가를 구분하고 실제 수집 시각을 입력해야 합니다.
-- 파일당 50MiB, 최대 30개, 총 200MiB. 작업별 Agent 인스턴스 하나만 분석합니다.
+- **대용량 로그 지원:** 파일당 최대 **350MiB**, 최대 30개, 전체 **600MiB**까지 업로드합니다. 약 300MB `dbwrap.log`와 다른 로그를 함께 분석할 수 있습니다. 작업별 Agent 인스턴스 하나만 분석합니다. 대용량 업로드는 파일 내용을 로컬 메모리에 보관한 상태로 분석하므로 사용 PC의 메모리·디스크 여유가 필요합니다.
 - CNS RESPONSE_CODE=S는 발송 요청 수락이며 최종 수신자 배송 성공이 아닙니다.
 - 지연·헬스체크 공백은 원인을 확정하지 않으며 SQL Lock이나 프로세스 종료를 단정하지 않습니다.
 
@@ -107,11 +115,31 @@ MVP 1.0 시험 장비(macOS arm64, Python 3.13)에서:
 - 10MB / 180,789 이벤트: 전체 분석·조회 3.47초, peak process 165MB
 - 50MB / 903,944 이벤트: 전체 분석·조회 21.97초, peak process 246MB
 
+**대용량 DBWrap 합성 검증(2026-10-27, Mac Studio / Python 3.13.14):**
+정확히 300MiB인 가상 `dbwrap.log`에서 38,759건의 SQL 실행 이벤트를 누락 없이 추출했고
+분석 상태 `complete`, 보고서 생성 및 대시보드 조회가 통과했습니다.
+로컬 독립 Python 프로세스 기준 분석 4.314초, 조회 0.298초, 메모리 최대 약 675MiB를 관측했습니다.
+SQL 본문은 결과/보고서에 포함되지 않았고 테스트 파일은 임시 디렉터리에서 삭제했습니다.
+단, 이 로그는 SQL 본문 길이가 긴 합성 사례이며 실제 고객사 로그의 이벤트 밀도·처리 속도,
+Windows 브라우저 업로드·NTFS 권한을 검증한 결과는 아닙니다.
+
 실제 고객사 로그의 완전한 회귀 테스트는 개인정보 취급 승인을 거친 뒤 로컬에서 수행해야 합니다.
 
 ## 문서
 
 - docs/USER_GUIDE.md — 사용·보안·삭제·CLI·분석 한계
 - docs/CASE_AUTHOR_GUIDE.md — 별도 AI가 따라야 할 해결 사례 JSON 규칙
-- STAGE1_HANDOFF.md / STAGE2_HANDOFF.md / STAGE3_HANDOFF.md — 이전 단계 구현 기록
-- STAGE4_HANDOFF.md — 최종 검증 및 후속 개선 사항
+
+
+## V4 분석 워크벤치 (V3.1 통합)
+
+분석 대시보드에서 **종합 현황 / 전체 이벤트 / Job 분석 / DB 분석 / 이상·오류 분석 / 수집·분석 품질**의 6개 메뉴를 선택합니다.
+
+- 전체 이벤트는 대표 Finding의 근거 상한과 관계없이 모든 정규화 이벤트를 페이지로 조회합니다. 원본 로그의 모든 텍스트 행을 의미하지는 않습니다.
+- Job별 작업대상·처리시간·TPS·단계별 소요시간, SQL 실행별 PSTMT·명령 종류·결과·Laptime 등 자세한 필드를 표시합니다.
+- 시간대 그래프에서 선택 구간을 전체 이벤트 필터로 전달하고, 이벤트 선택 시 허용된 구조화 속성과 선택형 마스킹 원본·주변 이벤트를 볼 수 있습니다.
+- 조회 결과의 CSV는 현재 페이지의 안전한 선택 열만 포함합니다.
+- 최신/지연순 정렬은 상위 20,000건 범위까지, 오래된 시간순은 전체 이력 페이지를 탐색할 수 있습니다.
+- 절대 탐지 기준 초과 이력과 상대 기준이 포함되는 최종 이상 Finding 판정은 구별해야 합니다.
+
+상세한 사용·보안·한계: [V4 분석 워크벤치](docs/WORKBENCH_V4.md).
