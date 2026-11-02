@@ -15,6 +15,7 @@ import streamlit as st
 
 from .dashboard_data import find_correlated_events, summarize_events
 from .finding_view_v2 import file_label
+from .support_store import ui_file_label, ui_rows, read_context
 from .workbench_data import (
     DISPLAY_FIELDS, EVENT_NAMES, PAGE_SIZES, SIGNAL_TYPES,
     EventQuery, file_quality_rows, query_events,
@@ -22,7 +23,7 @@ from .workbench_data import (
 
 SCREENS = (
     "종합 현황", "전체 이벤트", "Job 분석", "DB 분석",
-    "이상·오류 분석", "수집·분석 품질",
+    "이상·오류 분석", "수집·분석 품질", "장애 조사",
 )
 
 DEFAULT_COLUMNS = {
@@ -151,7 +152,7 @@ def _query_controls(case_dir: Path, manifest: dict[str, Any],
     job_name = c.selectbox("Job", ["전체"] + jobs, key=f"{prefix}_job")
     source = d.selectbox("파일", ["전체"] + choices,
                          format_func=lambda x: ("전체" if x == "전체"
-                             else file_label(x, manifest)), key=f"{prefix}_file")
+                             else ui_file_label(case_dir, x, manifest)), key=f"{prefix}_file")
     a, b, c, d = st.columns(4)
     from_date = a.text_input("시작 시각", value="", key=from_key if view == "events"
                              else f"{prefix}_from", placeholder="2026-10-15T10:00",
@@ -242,7 +243,7 @@ def _detail(case_dir: Path, manifest: dict[str, Any], selected: dict[str, Any],
                 "근거 위치": record["근거 위치"],
             } for record in nearby]
             if mapped:
-                st.dataframe(pd.DataFrame(mapped), hide_index=True, width="stretch")
+                st.dataframe(pd.DataFrame(ui_rows(case_dir, manifest, mapped)), hide_index=True, width="stretch")
             else:
                 st.caption("주변에 날짜가 확인된 구조화 이벤트가 없습니다.")
             st.caption("시간적으로 가까운 기록이라는 사실만으로 인과관계가 확정되지 않습니다.")
@@ -286,8 +287,10 @@ def _events_table(case_dir: Path, manifest: dict[str, Any],
         file_name=f"mpush_{view}_page_{page}.csv",
         mime="text/csv", key=f"{prefix}_csv",
     )
+    display_rows = ui_rows(case_dir, manifest, rows)
+    display_frame = pd.DataFrame(display_rows)
     table = st.dataframe(
-        frame[list(columns)], hide_index=True, width="stretch",
+        display_frame[list(columns)], hide_index=True, width="stretch",
         height=min(620, 55 + 35 * len(rows)),
         on_select="rerun", selection_mode="single-row",
         key=f"{prefix}_table_{_filter_hash(query, page, columns)}",
@@ -296,7 +299,7 @@ def _events_table(case_dir: Path, manifest: dict[str, Any],
     if selected_index is None or not 0 <= selected_index < len(rows):
         st.caption("상세 속성·원본 근거를 보려면 표에서 한 행을 선택하세요.")
         return
-    _detail(case_dir, manifest, rows[selected_index],
+    _detail(case_dir, manifest, display_rows[selected_index],
             key=f"{prefix}_detail_{_filter_hash(query, page, selected_index, rows[selected_index].get('줄번호'))}")
 
 
@@ -376,7 +379,7 @@ def _signal_summary(case_dir: Path, result: dict[str, Any],
         if not isinstance(values, dict):
             continue
         lines.append({
-            "로그": file_label(fid, manifest),
+            "로그": ui_file_label(case_dir, fid, manifest),
             "관측 헬스체크": values.get("healthcheck_samples"),
             "날짜 확정 표본": values.get("anchored_samples"),
             "관측 통상 간격(초)": values.get("estimated_interval_seconds"),
@@ -395,7 +398,7 @@ def _signal_summary(case_dir: Path, result: dict[str, Any],
     st.caption("헬스체크 기록 공백은 Agent 정지나 통신 장애의 확정 증거가 아닙니다.")
 
 
-def _quality(manifest: dict[str, Any], result: dict[str, Any]) -> None:
+def _quality(case_dir: Path, manifest: dict[str, Any], result: dict[str, Any]) -> None:
     metrics = result.get("metrics") or {}
     a, b, c, d = st.columns(4)
     a.metric("분석 상태", "완료" if result.get("analysis_status") == "complete" else "제한 있음")
@@ -405,7 +408,7 @@ def _quality(manifest: dict[str, Any], result: dict[str, Any]) -> None:
     st.markdown("#### 제출된 전체 파일 목록")
     submitted = manifest.get("files") or []
     sources = [{
-        "파일": file_label(f.get("file_id"), manifest),
+        "파일": ui_file_label(case_dir, f.get("file_id"), manifest),
         "종류": f.get("kind"),
         "완전성": {"full": "전체 제출", "partial": "일부 추출",
                  "unknown": "미확인"}.get(f.get("completeness"), "미확인"),
@@ -417,7 +420,7 @@ def _quality(manifest: dict[str, Any], result: dict[str, Any]) -> None:
     st.markdown("#### 파일별 수집·파싱 현황")
     records = file_quality_rows(result, manifest)
     if records:
-        st.dataframe(pd.DataFrame(records), hide_index=True, width="stretch")
+        st.dataframe(pd.DataFrame(ui_rows(case_dir, manifest, records)), hide_index=True, width="stretch")
     else:
         st.info("파일별 파싱 품질 기록이 없습니다.")
     st.caption(
@@ -441,12 +444,20 @@ def _quality(manifest: dict[str, Any], result: dict[str, Any]) -> None:
         "동일 Agent 인스턴스 여부, 로그 누락, 운영 DB·JVM·네트워크의 실제 상태는 "
         "이 화면만으로 확정할 수 없습니다."
     )
-    st.caption("원본 파일명·SQL 본문·메시지 내용 및 인증정보는 결과 조회에 표시하지 않습니다.")
+    st.caption("원본명·상대경로는 로컬 화면에만 표시합니다. CSV·AI·일반 보고서는 익명 별칭을 유지합니다.")
 
 
 def render_workbench(case_dir: Path, manifest: dict[str, Any],
                      result: dict[str, Any], matches: dict[str, Any]) -> None:
     st.subheader("MPushAgent 로그 분석 워크벤치")
+    st.caption("근거 파일: 로컬 원본명·상대경로 표시 / 외부 전달 CSV·AI·보고서: 익명 별칭 유지")
+    try:
+        has_source_names = bool(read_context(case_dir).get("sources"))
+    except (ValueError, OSError):
+        has_source_names = False
+        st.warning("로컬 원본명 연결 파일을 검증하지 못했습니다. 익명 별칭으로 표시하며 기존 데이터를 덮어쓰지 않습니다.")
+    if not has_source_names:
+        st.info("이 분석은 원본명이 보관되지 않았습니다. 내보내기·관리에서 동일한 원본 파일을 다시 선택하면 SHA-256 대조 후 이름을 복구할 수 있습니다.")
     st.caption("전체 실행 이력 → 이상 발생 시간대 → 관련 로그 → 원본 근거 순으로 조사합니다.")
     if result.get("analysis_status") != "complete":
         st.warning("분석 자료가 일부 추출됐거나 날짜 근거가 부족합니다. 결과 해석에 제한이 있습니다.")
@@ -455,7 +466,10 @@ def render_workbench(case_dir: Path, manifest: dict[str, Any],
     to_key = f"wb_{case_dir.name}_range_to"
     screen = st.radio("분석 메뉴", SCREENS, horizontal=True, key=nav_key)
     st.divider()
-    if screen == "종합 현황":
+    if screen == "장애 조사":
+        from .investigation_ui import render_investigation
+        render_investigation(case_dir,manifest,result)
+    elif screen == "종합 현황":
         _overview(case_dir, manifest, result, matches, nav_key=nav_key,
                   from_key=from_key, to_key=to_key)
     elif screen == "전체 이벤트":
@@ -486,4 +500,4 @@ def render_workbench(case_dir: Path, manifest: dict[str, Any],
                       from_key=from_key, to_key=to_key)
     else:
         st.markdown("### 제출 자료 및 분석 신뢰성")
-        _quality(manifest, result)
+        _quality(case_dir, manifest, result)

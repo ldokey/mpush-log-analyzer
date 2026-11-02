@@ -13,3 +13,8 @@ knowledge/approved/
 .env
 .env.*
 .DS_Store
+
+# Local support data: never include in a public release
+*.private.json
+*.lock
+.update-backups/

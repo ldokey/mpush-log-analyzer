@@ -1,43 +1,32 @@
-"""Group err.log records and stack traces; never copy exception messages/frames."""
+"""One exception stack per event; preserve explicit cause/suppressed links only."""
 from __future__ import annotations
-import re
 from typing import Iterable, Iterator
 from .common import MAX_RECORD_LINES, RawEvent, parse_clock
-EXCEPTION = re.compile(r"\b([A-Za-z_][\w.$]{0,90}(?:Exception|Error))\b")
-FRAME = re.compile(r"^\s*(?:at\s+[\w.$<>]+\(|\.\.\.\s+\d+\s+more|Caused by\s*:)")
+from ..exception_chain import chain_details, continuation, has_exception, CLASS
+
 
 def _event(block: list[tuple[int,str]], clock: str | None, forced_incomplete: bool = False) -> RawEvent:
-    suffix = "unspecified"
-    for _, line in block:
-        match = EXCEPTION.search(line)
-        if match:
-            tail = match.group(1).rsplit(".", 1)[-1]
-            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{1,55}", tail):
-                suffix = tail
-                break
-    frames = sum(1 for _, line in block if FRAME.search(line))
-    return RawEvent(
-        kind="log_error", start_line=block[0][0], end_line=block[-1][0],
-        clock=clock, status="incomplete" if forced_incomplete else "observed",
-        data={"exception_class": suffix, "stack_frame_count": frames}
-    )
+    return RawEvent('log_error', block[0][0], block[-1][0], clock,
+                    chain_details(block, incomplete=forced_incomplete),
+                    'incomplete' if forced_incomplete else 'observed')
+
 
 def parse(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
-    block: list[tuple[int,str]] = []
-    stamp: str | None = None
+    block: list[tuple[int,str]] = []; stamp = None
     for number, line in lines:
         clock = parse_clock(line)
-        if clock is not None and block:
+        # Explicit Caused by / Suppressed / frame lines with a repeated same
+        # timestamp are part of the current stack, not extra error incidents.
+        attached = bool(block and continuation(line) and (clock is None or clock == stamp))
+        new_root = bool(block and CLASS.search(line) and not continuation(line)
+                        and any(CLASS.search(text) for _,text in block))
+        if block and ((clock is not None and not attached) or new_root):
             yield _event(block, stamp)
-            block = []
-        if not block and not line.strip():
-            continue
-        if clock is not None:
-            stamp = clock
-        block.append((number, line))
+            block = []; stamp = None
+        if not block and not line.strip(): continue
+        if not block and clock is not None: stamp = clock
+        block.append((number,line))
         if len(block) >= MAX_RECORD_LINES:
-            yield _event(block, stamp, forced_incomplete=True)
-            block = []
-            stamp = None
-    if block:
-        yield _event(block, stamp)
+            yield _event(block, stamp, True)
+            block = []; stamp = None
+    if block: yield _event(block, stamp)

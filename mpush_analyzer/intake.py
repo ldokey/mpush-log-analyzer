@@ -30,6 +30,7 @@ class Upload:
     content: bytes
     completeness: Completeness = "unknown"
     override_kind: Kind | None = None
+    origin: str | None = None  # local-only source/archive-relative label
 
 
 @dataclass(frozen=True)
@@ -96,9 +97,9 @@ def _content_kind(text: str) -> Kind | None:
 
 
 def _date_hint(label: str) -> str | None:
-    for match in re.finditer(r"(?<!\d)(20\d{6})(?!\d)", label):
+    for match in re.finditer(r"(?<!\d)(20\d{2})[-_]?(\d{2})[-_]?(\d{2})(?!\d)", label):
         try:
-            return datetime.strptime(match.group(1), "%Y%m%d").date().isoformat()
+            return datetime.strptime("".join(match.groups()), "%Y%m%d").date().isoformat()
         except ValueError:
             continue
     return None
@@ -135,14 +136,20 @@ def validate_upload_limits(sizes: list[int]) -> None:
         raise ValueError(f"총 업로드 용량이 {MAX_TOTAL_FILES_BYTES // (1024 * 1024)}MiB 제한을 초과했습니다.")
 
 
+def supported_log_name(name: str) -> bool:
+    basename = display_filename(name).lower()
+    return (Path(basename).suffix in VALID_SUFFIXES or
+            re.search(r"\.log(?:[._-]\d{1,4}|[._-]20\d{2}[-_]?\d{2}[-_]?\d{2})$", basename) is not None)
+
+
 def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
     validate_upload_limits([len(item.content) for item in uploads])
-    found: dict[str, int] = {}
+    found: dict[tuple[str, str | None], int] = {}
     result: list[Inspected] = []
     for index, upload in enumerate(uploads, 1):
         label = display_filename(upload.name)
-        if Path(label).suffix.lower() not in VALID_SUFFIXES:
-            raise ValueError("지원하지 않는 확장자가 있습니다. .log, .txt, .ini만 가능합니다.")
+        if not supported_log_name(label):
+            raise ValueError("지원하지 않는 확장자가 있습니다. .log, 회전 .log.1, .txt, .ini 형식을 사용하세요.")
         if upload.completeness not in ("full", "partial", "unknown"):
             raise ValueError("잘못된 로그 완전성 값입니다.")
         if upload.override_kind is not None and upload.override_kind not in KINDS:
@@ -151,8 +158,6 @@ def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
             raise ValueError("텍스트 파일이 아닌 입력이 감지되었습니다.")
 
         digest = sha256(upload.content).hexdigest()
-        duplicate_of = found.get(digest)
-        found.setdefault(digest, index)
         sample_text, encoding = decode_upload(upload.content[:131072])
         filename_kind = _filename_kind(label)
         content_kind = _content_kind(sample_text)
@@ -173,6 +178,11 @@ def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
             kind = "unknown"
             confidence, detection = "low", "unclassified"
             warnings.append("파일 유형을 판별할 수 없습니다.")
+        # Equal bytes on different dated files are not the same observation
+        # stream. Within the same date retain the legacy first-copy policy.
+        duplicate_key = (digest, _date_hint(label))
+        duplicate_of = found.get(duplicate_key)
+        found.setdefault(duplicate_key, index)
         if not upload.content:
             warnings.append("파일이 비어 있습니다.")
         if duplicate_of:

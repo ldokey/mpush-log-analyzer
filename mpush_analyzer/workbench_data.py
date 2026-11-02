@@ -143,7 +143,10 @@ def _safe_details(event: dict[str, Any]) -> dict[str, Any]:
             "영향 행수": _number(d.get("affected_rows"), 10_000_000, decimal=0),
         }
     if kind == "log_error":
+        from .exception_chain import chain_label
         return {
+            "예외 원인 체인": chain_label(d),
+            "체인 제한": "일부만 보관" if d.get("chain_truncated") is True else "관측된 구조",
             "예외 유형": _code(d.get("exception_class"), SAFE_ERROR),
             "스택 프레임 수": _number(d.get("stack_frame_count"), 10000, decimal=0),
         }

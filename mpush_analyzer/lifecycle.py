@@ -11,7 +11,8 @@ from .pipeline import _get_manifest
 CASE_PATTERN = re.compile(r"^analysis_[0-9a-f]{32}$")
 OUTPUTS = {
     "manifest.json", "events.jsonl", "analysis_result.json",
-    "case_matches.json", "report.md", "report.html", "report.json"
+    "case_matches.json", "report.md", "report.html", "report.json",
+    "local_context.private.json", "investigation.private.json"
 }
 
 

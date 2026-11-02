@@ -75,6 +75,7 @@ def parse_agent_ini(text: str) -> dict[str, Any]:
         "agent": {
             "id_present": bool(agent.get("id")),
             "run_type": run_type,
+            "debug_enabled": safe_bool(agent.get("debug")),
         },
         "service": {"service_present": bool(sections.get("SERVICE", {}).get("service"))},
         "dbms": {"type": dbms_type, **{

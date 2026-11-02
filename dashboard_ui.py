@@ -11,6 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from mpush_analyzer.ai_brief_v2 import build_ai_exports
+from mpush_analyzer.support_store import ui_file_label, ui_rows
 from mpush_analyzer.incident_overview import category, finding_time_sort_key, snapshot
 from mpush_analyzer.dashboard_data import (
     EventFilters, find_correlated_events, read_result_bundle, summarize_events
@@ -172,7 +173,7 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
     rows = [summary_row(item, manifest) for item in visible]
     columns = ["대표/기준 시각", "이상 항목", "주요 수치", "근거 파일", "심각도", "판정"]
     st.caption(f"현재 {len(visible)}건 표시 · 목록 시각은 대표 로그 또는 대표 구간 기준이며 장애 시작시각이 아닙니다.")
-    selected = st.dataframe(pd.DataFrame(rows)[columns], hide_index=True, width='stretch',
+    selected = st.dataframe(pd.DataFrame(ui_rows(case_dir, manifest, rows))[columns], hide_index=True, width='stretch',
                             height=min(425, 54 + 36 * len(rows)),
                             on_select="rerun", selection_mode="single-row",
                             key=f"findings_v3_{case_dir.name}")
@@ -216,7 +217,7 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
     if refs:
         show_cols = ["근거시각", "근거 파일", "줄", "날짜 근거", "관측 구분"]
         evidence_table = st.dataframe(
-            pd.DataFrame(refs)[show_cols], hide_index=True, width='stretch',
+            pd.DataFrame(ui_rows(case_dir, manifest, refs))[show_cols], hide_index=True, width='stretch',
             on_select="rerun", selection_mode="single-row",
             key=f"evidence_v2_{case_dir.name}_{presentation['finding_id']}")
         chosen = refs[max(0, min(_table_selection(evidence_table), len(refs) - 1))]
@@ -226,6 +227,7 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
             st.caption("소요시간으로 계산한 시작: " + chosen["계산상 시작"]
                        + " · " + chosen.get("시작시각 주의", ""))
         st.markdown("##### 선택 근거의 마스킹된 원본")
+        st.text(ui_file_label(case_dir, chosen["원본 ID"], manifest))
         _preview(case_dir, {
             "file_id": chosen["원본 ID"], "line_start": chosen["시작행"],
             "line_end": chosen["끝행"]
@@ -248,7 +250,7 @@ def _render_findings(case_dir: Path, manifest: dict, result: dict, matches: dict
             converted.append({
                 "시간": event["시간"],
                 "기준 시각차(초)": event.get("시각차(초)"),
-                "로그": file_label(m.group(1), manifest) if m else "미확인",
+                "로그": ui_file_label(case_dir, m.group(1), manifest) if m else "미확인",
                 "종류": event["유형"],
                 "처리 내용": event["주요값"],
                 "줄번호": label.split(":")[-1],
@@ -335,7 +337,7 @@ def _render_timeline(case_dir: Path, manifest: dict, result: dict) -> None:
             m = re.fullmatch(r"(file_\d{2}):(\d+)-(\d+)", pos)
             mapped.append({
                 "시간":event["시간"],
-                "파일":file_label(m.group(1),manifest) if m else "미확인",
+                "파일":ui_file_label(case_dir,m.group(1),manifest) if m else "미확인",
                 "이벤트":event["유형"],
                 "핵심 수치":event["주요값"],
                 "근거 줄":m.group(2)+"–"+m.group(3) if m else "-",

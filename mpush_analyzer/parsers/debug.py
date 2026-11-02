@@ -16,7 +16,7 @@ def _exception_kind(text: str) -> str:
     result = found.group(1).rsplit(".", 1)[-1]
     return result if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{1,55}", result) else "unspecified"
 
-def parse(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
+def _parse_regular(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
     for number, text in lines:
         clock = parse_clock(text)
         if clock is None:
@@ -46,3 +46,8 @@ def parse(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
             yield RawEvent("log_error", number, number, clock, {
                 "exception_class": _exception_kind(text)
             })
+
+
+def parse(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
+    from ..exception_chain import parse_mixed
+    yield from parse_mixed(lines, _parse_regular)

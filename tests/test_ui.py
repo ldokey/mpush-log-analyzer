@@ -12,6 +12,6 @@ def test_streamlit_app_boots_without_uploaded_data():
     # Nested incident tabs are rendered inside the dashboard; ensure top-level
     # navigation still appears in the intended order without forbidding nesting.
     labels = [tab.label for tab in test_app.tabs]
-    expected = ["분석 대시보드", "로그 업로드", "해결 사례", "보고서·관리"]
+    expected = ["문의·해결 기록", "분석 대시보드", "자료 가져오기", "사례 라이브러리", "내보내기·관리"]
     assert all(label in labels for label in expected)
     assert [labels.index(label) for label in expected] == sorted(labels.index(label) for label in expected)
