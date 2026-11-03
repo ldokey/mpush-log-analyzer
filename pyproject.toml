@@ -19,3 +19,6 @@ addopts = "-q"
 
 [tool.setuptools.packages.find]
 include = ["mpush_analyzer*"]
+
+[tool.setuptools.package-data]
+mpush_analyzer = ["diagnostics_web/*.html", "diagnostics_web/*.css", "diagnostics_web/*.js"]

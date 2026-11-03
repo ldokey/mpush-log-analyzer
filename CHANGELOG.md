@@ -1,5 +1,14 @@
 # Changelog
 
+## v4.3 development — 2026-11-03 (not released)
+
+- Added three Stitch-derived desktop workbench tabs for Job stalls, message outcomes, and observed throughput/backlog.
+- Explicitly separated server request acceptance from original/fallback message outcomes; no assumed success from SQL predicates or missing stages.
+- Compared Job gaps/RUNNING repeats/duration spikes against observed baselines, with evidence links and explicit uncertainty.
+- Added session-only manual backlog observations and offline, de-identified JSON export.
+- Synthetic regression: 313 tests (229 existing + 84 new); 39 real-browser integration/robustness checks on macOS.
+- No main/release update; no Windows native or real customer-log acceptance claimed.
+
 ## v4.2.0 — 2026-11-02
 
 Integrated **V4.1 + V4.2** release; includes existing V4.0.0 and V3.1 functionality.

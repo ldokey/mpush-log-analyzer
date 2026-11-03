@@ -1,4 +1,4 @@
-"""MPushAgent Log Analyzer - V4.2 local inquiry investigation workspace."""
+"""MPushAgent Log Analyzer - V4.3 개발본 local inquiry investigation workspace."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,7 +19,7 @@ APP_ROOT = Path(__file__).resolve().parent
 
 st.set_page_config(page_title="MPushAgent Log Analyzer", page_icon="🔎", layout="wide")
 st.title("MPushAgent Log Analyzer")
-st.caption("V4.2 · 고객 문의 → 장애 조사 → 조치·검증 → 해결 사례 · 로컬 전용")
+st.caption("V4.3 개발본 · 고객 문의 → 장애 조사 → 조치·검증 → 해결 사례 · 로컬 전용")
 
 pending = st.session_state.pop("support_pending_analysis", None)
 if pending:
@@ -190,4 +190,4 @@ with tab_report:
                         st.rerun()
 
 st.divider()
-st.caption("로컬 전용 · 원본 해시·개인정보 보호 · 기존 Agent/DB 접근 및 변경 없음 · V4.2 장애 조사·문의 워크스페이스")
+st.caption("로컬 전용 · 원본 해시·개인정보 보호 · 기존 Agent/DB 접근 및 변경 없음 · V4.3 개발본 장애 조사·문의 워크스페이스")

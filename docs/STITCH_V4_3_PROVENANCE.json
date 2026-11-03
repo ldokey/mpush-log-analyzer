@@ -1,0 +1,36 @@
+{
+  "project_id": "9409874347473150518",
+  "device": "DESKTOP",
+  "source": "Google Stitch actual generated HTML/CSS",
+  "screens": {
+    "jobs": {
+      "screen_id": "4c2bc6e418db423188f501520339047b",
+      "html_sha256": "94bc1cc61d3ca1def09f794d8cf7c94ddfb992c866a8a5033ad4c1ab75357397",
+      "css_sha256": "440cdd8fa8197487bf478b7b399eb349aa81d314f60b09b034a47db2d357ce32",
+      "html_bytes": 43187,
+      "css_bytes_reused": 15906
+    },
+    "messages": {
+      "screen_id": "9e95d4ac08e44ebba35b8d846ed2425e",
+      "html_sha256": "7c33fd0219de789254311bee6bdda055be2a54482f6949050c3917e3b85b1bf1",
+      "css_sha256": "d4a8f8644595a992982226aaefeabd6f089005514c9732a599412173084f09e1",
+      "html_bytes": 45947,
+      "css_bytes_reused": 17794
+    },
+    "performance": {
+      "screen_id": "023614fb1d954b1b93f9e453ae6d8a0a",
+      "html_sha256": "a2c7bafa0607131bccae55ff7da75311b26f37ac032af3b2840a262307d58934",
+      "css_sha256": "5f2fab2796d91ec0dee80c22d4bff2ee972c384ee323a49b824e9b3f50efc626",
+      "html_bytes": 51447,
+      "css_bytes_reused": 17317
+    }
+  },
+  "adaptations": [
+    "Original CSS blocks retained verbatim per screen.",
+    "Original header and SVG mark retained; tabs, cards, tables, journey and evidence panels connected to safe dynamic data.",
+    "Static sample numbers and invented outcome-code meanings removed.",
+    "Parent application width accommodated; no mobile screen created.",
+    "Native Streamlit forms own sensitive input and explicit raw scan consent.",
+    "Local provenance labels passed separately from deidentified export payload."
+  ]
+}

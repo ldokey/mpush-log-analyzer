@@ -23,7 +23,7 @@ from .workbench_data import (
 
 SCREENS = (
     "종합 현황", "전체 이벤트", "Job 분석", "DB 분석",
-    "이상·오류 분석", "수집·분석 품질", "장애 조사",
+    "이상·오류 분석", "수집·분석 품질", "장애 조사", "실행·발송·성능",
 )
 
 DEFAULT_COLUMNS = {
@@ -466,7 +466,10 @@ def render_workbench(case_dir: Path, manifest: dict[str, Any],
     to_key = f"wb_{case_dir.name}_range_to"
     screen = st.radio("분석 메뉴", SCREENS, horizontal=True, key=nav_key)
     st.divider()
-    if screen == "장애 조사":
+    if screen == "실행·발송·성능":
+        from .diagnostics_ui import render_diagnostics
+        render_diagnostics(case_dir, manifest, result)
+    elif screen == "장애 조사":
         from .investigation_ui import render_investigation
         render_investigation(case_dir,manifest,result)
     elif screen == "종합 현황":
