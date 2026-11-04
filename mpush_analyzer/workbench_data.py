@@ -38,6 +38,7 @@ EVENT_NAMES = {
     "job_run": "Job 실행", "sql_execution": "SQL 실행",
     "healthcheck_result": "헬스체크 결과", "healthcheck_request": "헬스체크 요청",
     "cns_response": "CNS 응답", "job_running_skip": "RUNNING 건너뜀",
+    "job_abnormal_skip": "ABNORMAL 건너뜀",
     "agent_start": "Agent 시작", "agent_started": "Agent 기동 완료",
     "agent_starting": "Agent 기동 중", "agent_exit": "Agent 종료",
     "agent_config_loading": "설정 로드", "scheduler_registration": "스케줄 등록",
@@ -55,7 +56,7 @@ DISPLAY_FIELDS = {
     "signals": ("시각", "유형", "상태", "Job", "주요 정보", "근거 파일", "줄번호"),
 }
 SIGNAL_TYPES = frozenset({
-    "log_error", "job_running_skip", "healthcheck_result",
+    "log_error", "job_running_skip", "job_abnormal_skip", "healthcheck_result",
     "healthcheck_request", "cns_response", "transport_event",
     "agent_exit", "agent_started", "agent_starting", "agent_config_loading",
 })

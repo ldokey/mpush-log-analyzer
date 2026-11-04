@@ -116,7 +116,9 @@ def _operation_states(text: str, values: dict, sql: bool) -> dict:
 
 
 def trace_outcomes(case: Path, window: Window, *, message: str = '', service: str = '',
-                   salt: bytes | None = None, limit: int = MAX_EVENTS) -> dict:
+                   salt: bytes | None = None, limit: int = MAX_EVENTS,
+                   anchor_date: date | None = None, date_confirmed: bool = False,
+                   redetect_encoding: bool = False) -> dict:
     if type(limit) is not int or not 1 <= limit <= MAX_EVENTS:
         raise ValueError('결과 추적 표시 상한을 확인하세요.')
     if not isinstance(message, str) or message and not VALID_ID.fullmatch(message):
@@ -127,6 +129,12 @@ def trace_outcomes(case: Path, window: Window, *, message: str = '', service: st
     if not isinstance(salt, bytes) or len(salt) != 32:
         raise ValueError('추적 가명화 키 형식을 확인하세요.')
     manifest = _get_manifest(case)
+    if anchor_date is not None:
+        if type(anchor_date) is not date or date_confirmed is not True or manifest.get('reference_date'):
+            raise ValueError('날짜 없는 로그에 적용할 기준 날짜 확인이 필요합니다.')
+        manifest['reference_date'] = anchor_date.isoformat()
+    if type(redetect_encoding) is not bool:
+        raise ValueError('인코딩 재확인 옵션이 올바르지 않습니다.')
     bounds = window.bounds()
     groups, events = {}, []
     evidence_count = 0
@@ -135,16 +143,23 @@ def trace_outcomes(case: Path, window: Window, *, message: str = '', service: st
         if f['kind'] not in {'job', 'info', 'err', 'debug', 'dbwrap'}:
             continue
         path = _safe_source(case, f)
-        codec = 'utf-8' if f['encoding'] == 'utf-8-replace' else f['encoding']
+        encoding = f['encoding']
+        if redetect_encoding:
+            from .diagnostics_input import _file_encoding
+            encoding = _file_encoding(path)
+        codec = 'utf-8' if encoding == 'utf-8-replace' else encoding
         hint = f.get('date_hint') or manifest.get('reference_date')
         resolver = ClockResolver(date.fromisoformat(hint) if hint else None)
         for block, clock, truncated in raw_records(path, codec):
+            stats['total_records'] += 1
             occurred, _ = resolver.normalize(clock)
             point = instant(occurred)
             if point is None:
                 stats['undated_records'] += 1
                 continue
+            stats['dated_records'] += 1
             if not bounds[0] <= point < bounds[1]:
+                stats['outside_window_records'] += 1
                 continue
             stats['scanned_records'] += 1
             text = '\n'.join(line for _, line in block)
@@ -163,6 +178,7 @@ def trace_outcomes(case: Path, window: Window, *, message: str = '', service: st
                 stats['missing_identity_records'] += 1
                 continue
             if message and msg != message or service and svc != service:
+                stats['search_excluded_records'] += 1
                 continue
             key = _alias(salt, 'message', svc+'\0'+msg)
             if key not in groups:
@@ -276,5 +292,9 @@ def trace_outcomes(case: Path, window: Window, *, message: str = '', service: st
             'by_status': dict(totals)}, 'coverage': dict(stats), 'source_quality': quality(manifest),
         'window': {'start': iso(bounds[0]), 'end': iso(bounds[1])},
         'population_limited': bool(stats['message_limit_records']),
+        'empty_reasons': ([] if output else [
+            '조회는 완료됐지만 연결 가능한 메시지는 0건입니다. 아래 제외 건수를 확인하세요.',
+            f"전체 레코드 {stats['total_records']:,}건 / 날짜 없음 {stats['undated_records']:,}건 / 구간 밖 {stats['outside_window_records']:,}건 / 식별 후보 {stats['candidate_records']:,}건 / 검색 조건 제외 {stats['search_excluded_records']:,}건",
+            '조회 구간·날짜·식별값이 같은 레코드에 있는지 확인하세요. 결과 미관측은 실패 0건이나 성공 0건을 확정하지 않습니다.']),
         'note': '명시적인 결과 수신의 SEND_RESULT_CODE1/2만 판정합니다. OK=성공이며 요청 수락 S·SEND_FLAG·SQL 조건값은 최종 결과가 아닙니다. '
                 '원 발송과 대체 결과를 분리하며 성공률은 판정 가능한 고유 메시지의 관측 비율입니다. 미관측은 실패가 아닙니다.'}

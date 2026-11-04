@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 import re
+import math
 from typing import Any
 
 LOG_START = re.compile(r"^\s*(?P<h>[01]\d|2[0-3]):(?P<m>[0-5]\d):(?P<s>[0-5]\d)\[(?P<ms>\d{1,3})\]")
@@ -28,10 +29,10 @@ def sanitized_job_token(raw: str | None) -> str | None:
     return None
 
 def finite_float(text: str | None, max_value: float = 1e9) -> float | None:
-    if not text or not re.fullmatch(r"\d{1,10}(?:\.\d{1,9})?", text.strip()):
+    if not text or not re.fullmatch(r"\d{1,10}(?:\.\d{1,9})?(?:[Ee][+-]?\d{1,3})?", text.strip()):
         return None
     v = float(text.strip())
-    return v if v <= max_value else None
+    return v if math.isfinite(v) and 0 <= v <= max_value else None
 
 class ClockResolver:
     """Only infer midnight for obvious 20:00-04:00 rollovers."""

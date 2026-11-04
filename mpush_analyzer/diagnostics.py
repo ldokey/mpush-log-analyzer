@@ -78,12 +78,12 @@ def _collect(case: Path, manifest: dict, window: Window, bucket_seconds: int,
         d = event.get('details')
         d = d if isinstance(d, dict) else {}
         name = job_name(d.get('job_name'))
-        if typ not in {'job_run', 'job_running_skip'} or not name:
+        if typ not in {'job_run', 'job_running_skip', 'job_abnormal_skip'} or not name:
             continue
         if name not in groups and len(groups) >= MAX_GROUPS:
             raise ValueError('Job 종류가 300개를 초과했습니다. 조사 구간을 좁혀 주세요.')
         g = groups.setdefault(name, {'name': name, 'records': 0, 'complete_records': 0,
-            'incomplete_records': 0, 'running_skips': 0, 'targets': 0, 'target_samples': 0,
+            'incomplete_records': 0, 'running_skips': 0, 'abnormal_skips': 0, 'targets': 0, 'target_samples': 0,
             'paired_targets': 0, 'paired_seconds': 0., 'paired_samples': 0,
             'duration': Distribution(budget), 'steps': {s: Distribution(budget) for s in STEPS},
             'buckets': {}, 'evidence': [], 'delays': [], 'delay_count': 0})
@@ -93,6 +93,8 @@ def _collect(case: Path, manifest: dict, window: Window, bucket_seconds: int,
         complete = event.get('status') == 'complete'
         if typ == 'job_running_skip':
             g['running_skips'] += 1
+        elif typ == 'job_abnormal_skip':
+            g['abnormal_skips'] += 1
         else:
             g['records'] += 1
             g['complete_records'] += complete
@@ -262,7 +264,7 @@ def diagnose_jobs(case: Path, manifest: dict, window: Window, *,
                         'refs': [cluster[0]['ref'], cluster[-1]['ref']]})
             cluster.clear()
         for row in rows:
-            if row['type'] == 'job_run':
+            if row['type'] in {'job_run', 'job_abnormal_skip'}:
                 finish_cluster()
             else:
                 completions = completed_by_job.get(name, [])
@@ -290,7 +292,7 @@ def diagnose_jobs(case: Path, manifest: dict, window: Window, *,
                     'full_sources': source_full, 'ref': last['ref'],
                     'meaning': '입력된 수집시각/조사 종료까지 후속 완료 미관측. 실제 Job 중단/종료 시각은 확정하지 않습니다.'}
         n = d['current']
-        if n and (d['gap_count'] or d['running_cluster_count'] or n['delay_count'] or (d['tail_observation'] and d['tail_observation']['full_sources'])):
+        if n and (d['gap_count'] or d['running_cluster_count'] or n['delay_count'] or n['abnormal_skips'] or (d['tail_observation'] and d['tail_observation']['full_sources'])):
             d['status'] = 'attention'
         elif n and (d['sequence_records_omitted'] or not n['duration']['samples']):
             d['status'] = 'insufficient'

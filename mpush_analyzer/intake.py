@@ -1,6 +1,7 @@
 """Stage-1 source inventory, content classification and safe input limits."""
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -63,12 +64,38 @@ def decode_upload(data: bytes) -> tuple[str, str]:
             return data.decode("utf-8", errors="replace"), "utf-8-replace"
 
 
+def detect_text_encoding(chunks_factory) -> str:
+    """Validate complete text incrementally, not a potentially split sample."""
+    for codec in ('utf-8-sig', 'cp949'):
+        decoder = codecs.getincrementaldecoder(codec)(errors='strict')
+        try:
+            bom = False
+            for i, block in enumerate(chunks_factory()):
+                if i == 0:
+                    bom = block.startswith(b'\xef\xbb\xbf')
+                decoder.decode(block, final=False)
+            decoder.decode(b'', final=True)
+            return ('utf-8-sig' if bom else 'utf-8') if codec == 'utf-8-sig' else codec
+        except UnicodeDecodeError:
+            continue
+    return 'utf-8-replace'
+
+
+def content_encoding(data: bytes) -> str:
+    return detect_text_encoding(lambda: (data[i:i+131072] for i in range(0,len(data),131072)))
+
+
+def decode_prefix(data: bytes, encoding: str) -> str:
+    codec = 'utf-8' if encoding == 'utf-8-replace' else encoding
+    return codecs.getincrementaldecoder(codec)(errors='replace').decode(data, final=False)
+
+
 def _filename_kind(label: str) -> Kind | None:
     basename = display_filename(label).lower()
     if basename == "agent.ini":
         return "agent_ini"
     stem = Path(basename).stem
-    stem = re.sub(r"^\d{8}[-_.]*", "", stem)
+    stem = re.sub(r"^\d{8}(?:[0-2]\d(?:[0-5]\d)?)?[-_.]*", "", stem)
     for name in ("dbwrap", "debug", "info", "job", "err", "error"):
         if (stem.startswith(name) and (len(stem) == len(name) or not stem[len(name)].isalpha())) or (
             re.search(r"(?:[-_.])" + name + r"(?=$|[-_.0-9])", stem) is not None
@@ -97,18 +124,26 @@ def _content_kind(text: str) -> Kind | None:
 
 
 def _date_hint(label: str) -> str | None:
-    for match in re.finditer(r"(?<!\d)(20\d{2})[-_]?(\d{2})[-_]?(\d{2})(?!\d)", label):
+    # Daily/hourly/minute rotation only; never truncate a longer numeric ID.
+    pattern = r"(?<!\d)(20\d{2})[-_]?(\d{2})[-_]?(\d{2})(?:[-_]?([0-2]\d)(?:[-_]?([0-5]\d))?)?(?!\d)"
+    for match in re.finditer(pattern, label):
         try:
-            return datetime.strptime("".join(match.groups()), "%Y%m%d").date().isoformat()
+            y, m, d, hour, minute = match.groups()
+            value = datetime(int(y),int(m),int(d),int(hour or 0),int(minute or 0))
+            return value.date().isoformat()
         except ValueError:
             continue
     return None
 
 
-def _timestamp_hints(data: bytes) -> tuple[str | None, str | None]:
+def _timestamp_hints(data: bytes, encoding: str | None = None) -> tuple[str | None, str | None]:
     # Use small windows for Stage-1 sampling; Stage-2 parses complete files.
-    first, _ = decode_upload(data[: min(len(data), 131072)])
-    last, _ = decode_upload(data[max(0, len(data) - 131072):])
+    codec = encoding or content_encoding(data)
+    first = decode_prefix(data[:131072], codec)
+    tail = data[max(0, len(data)-131072):]
+    if len(data)>131072 and b'\n' in tail:
+        tail = tail.split(b'\n',1)[1]
+    last = decode_prefix(tail, codec)
     matches_start = list(TIMESTAMP_RE.finditer(first))
     matches_end = list(TIMESTAMP_RE.finditer(last))
 
@@ -158,7 +193,8 @@ def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
             raise ValueError("텍스트 파일이 아닌 입력이 감지되었습니다.")
 
         digest = sha256(upload.content).hexdigest()
-        sample_text, encoding = decode_upload(upload.content[:131072])
+        encoding = content_encoding(upload.content)
+        sample_text = decode_prefix(upload.content[:131072], encoding)
         filename_kind = _filename_kind(label)
         content_kind = _content_kind(sample_text)
         warnings: list[str] = []
@@ -187,7 +223,7 @@ def inspect_uploads(uploads: list[Upload]) -> list[Inspected]:
             warnings.append("파일이 비어 있습니다.")
         if duplicate_of:
             warnings.append(f"{duplicate_of}번째 업로드 파일과 내용이 중복됩니다.")
-        first, last = _timestamp_hints(upload.content)
+        first, last = _timestamp_hints(upload.content, encoding)
         result.append(Inspected(
             upload=upload, label=label, kind=kind,
             confidence=confidence, detection=detection, encoding=encoding,

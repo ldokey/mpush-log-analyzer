@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.3.1 development — 2026-11-04 (not released)
+
+- Fixed timestamp-prefixed Job headers, clock-only log date absence, hourly/minute date detection, UTF-8/CP949 chunk boundaries and ABNORMAL skip observations.
+- Added inspectable input coverage and manual hash-verified, temporary reparse for existing analysis snapshots without modifying workspace or customer notes.
+- Improved original-only message scan boundaries and explicit empty-result explanations; reset stale Job/message filters when analysis scope changes.
+- Existing 313 + 53 new synthetic tests: 366 passed; 37 recovery/browser checks on macOS. Native Windows/customer logs unverified.
+- No main/release update, no migration of saved cases, and no automatic operations.
+
 ## v4.3 development — 2026-11-03 (not released)
 
 - Added three Stitch-derived desktop workbench tabs for Job stalls, message outcomes, and observed throughput/backlog.

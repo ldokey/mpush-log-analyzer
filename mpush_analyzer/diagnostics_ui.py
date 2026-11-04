@@ -6,7 +6,7 @@ The browser can request only server-selected evidence, not arbitrary file paths.
 from __future__ import annotations
 
 import copy
-from datetime import timedelta
+from datetime import date, timedelta
 import hashlib
 import json
 from pathlib import Path
@@ -20,7 +20,8 @@ import streamlit.components.v1 as components
 from .diagnostics import DiagnosticPolicy, diagnose_jobs, backlog_observations
 from .investigation import Window, instant, iso, population
 from .message_outcomes import trace_outcomes
-from .pipeline import _get_manifest
+from .pipeline import _get_manifest, PARSER_REVISION
+from .diagnostics_input import inspect_input, reparse_view
 from .support_store import ui_file_label, case_title
 
 WEB_ROOT = Path(__file__).with_name('diagnostics_web')
@@ -33,7 +34,7 @@ def source_signature(case: Path, manifest: dict) -> str:
 
 Actual raw scans and evidence reads additionally perform the existing SHA check.
 """
-    paths = [case/'manifest.json', case/'events.jsonl']
+    paths = [case/'manifest.json', case/'events.jsonl', case/'analysis_result.json']
     raw = case/'raw'
     if raw.is_symlink():
         raise ValueError('원본 폴더 링크는 허용되지 않습니다.')
@@ -43,9 +44,12 @@ Actual raw scans and evidence reads additionally perform the existing SHA check.
     for path in paths:
         if path.is_symlink():
             raise ValueError('분석 자료 링크는 허용되지 않습니다.')
+        if not path.exists():
+            stat.append([path.name, None, None])
+            continue
         s = path.stat()
         stat.append([path.name, s.st_size, s.st_mtime_ns])
-    return hashlib.sha256(json.dumps([str(case.resolve()), manifest, stat], sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps([PARSER_REVISION, str(case.resolve()), manifest, stat], sort_keys=True).encode()).hexdigest()
 
 
 def make_payload(jobs: dict, messages: dict | None, backlog: dict) -> dict:
@@ -106,27 +110,79 @@ def validate_action(value: Any, payload: dict) -> dict | None:
 
 
 def _defaults(case: Path, manifest: dict) -> tuple[str, str]:
-    overall = population(case, manifest)
-    first, last = instant(overall['first']), instant(overall['last'])
-    if first and last:
-        start = first.replace(second=0, microsecond=0)
-        return iso(start), iso(min(start+timedelta(days=31), last+timedelta(seconds=1)))
-    if manifest.get('reference_date'):
-        start = instant(manifest['reference_date']+'T00:00:00')
-        return iso(start), iso(start+timedelta(days=1))
-    return '', ''
+    window = inspect_input(case, manifest)['default_window']
+    return window['start'], window['end']
+
+
+def _clear_window_state(prefix: str) -> None:
+    # Called before condition widgets are instantiated in the current run.
+    for suffix in ('_config', '_lo', '_hi', '_base', '_base_lo', '_base_hi', '_confirmed'):
+        st.session_state.pop(prefix+suffix, None)
+    st.session_state.pop('_v43_job_cache', None)
+    st.session_state.pop('_v43_trace_cache', None)
 
 
 def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
     prefix = 'v43_'+case.name
+    try:
+        original_signature = source_signature(case, manifest)
+    except (ValueError, OSError):
+        st.error('원본 자료 경로를 안전하게 확인할 수 없습니다. 원본 폴더·파일과 접근 권한을 확인하세요.')
+        return
+    cached_view = st.session_state.get('_v43_recovery_view')
+    if cached_view and cached_view[0] != original_signature:
+        cached_view[1].close()
+        st.session_state.pop('_v43_recovery_view', None)
+        cached_view = None
+    view = cached_view[1] if cached_view else None
+    event_case, effective = (view.event_case, view.manifest) if view else (case, manifest)
+    signature = hashlib.sha256(json.dumps([original_signature, effective, bool(view)], sort_keys=True).encode()).hexdigest()
+    cached_profile = st.session_state.get('_v43_input_profile')
+    if not cached_profile or cached_profile[0] != signature:
+        profile = inspect_input(event_case, effective)
+        st.session_state['_v43_input_profile'] = (signature, profile)
+    else:
+        profile = cached_profile[1]
+    old_snapshot = not view and result.get('metrics', {}).get('parser_revision') != PARSER_REVISION
+    st.caption('V4.3.1 입력 보정본 · Stitch 데스크톱 · 원본·기존 분석·문의 데이터 보존')
+    with st.expander('자료 인식 상태 · 원본 재해석', expanded=old_snapshot or not profile['counts'].get('jobs') or bool(profile['counts'].get('undated'))):
+        st.caption(f"등록 파일 {len(manifest['files'])}개 / 인식 이벤트 {profile['counts'].get('records',0):,}건 / Job {profile['counts'].get('jobs',0):,}건 / 날짜 없는 이벤트 {profile['counts'].get('undated',0):,}건")
+        st.dataframe([{'파일':ui_file_label(case,f['file_id'],manifest), '유형':f['kind'], '줄 수':f['lines'],
+            '인식 이벤트':f['records'], 'Job':f['jobs'], '날짜 없는 이벤트':f['undated'],
+            '기준 날짜':f['date'] or '미지정', '인코딩':f['encoding'],
+            '인식 시작':f['first'] or '미확인', '인식 끝':f['last'] or '미확인'} for f in profile['files']], hide_index=True, use_container_width=True)
+        if old_snapshot:
+            st.info('이전에 저장된 판독 결과입니다. 코드 업데이트만으로 기존 이벤트 파일이 다시 만들어지지는 않습니다. 값이 빠졌다면 원본 재해석을 실행하세요.')
+        for reason in profile['reasons']:
+            st.warning(reason['message'])
+        anchor = st.date_input('날짜 없는 로그의 기준 날짜 (선택)', value=None, key=prefix+'_anchor_date')
+        date_confirmed = st.checkbox('선택한 날짜가 날짜 없는 로그의 실제 발생 기준일임을 확인했습니다.', key=prefix+'_anchor_confirmed')
+        st.caption('조회 시작/종료 날짜는 필터입니다. 날짜가 빠진 로그에 날짜를 부여하려면 위 기준 날짜를 확인하고 원본 재해석을 실행하세요. 파일명에 저장된 날짜는 덮어쓰지 않습니다.')
+        if st.button('원본 재해석 (기존 분석 보존)', key=prefix+'_reparse', type='primary'):
+            try:
+                with st.spinner('원본 해시 검증 · 현재 판독기로 임시 분석 생성 중...'):
+                    fresh = reparse_view(case, anchor_date=anchor, date_confirmed=date_confirmed)
+                if view:
+                    view.close()
+                st.session_state['_v43_recovery_view'] = (original_signature, fresh)
+                _clear_window_state(prefix)
+                st.rerun()
+            except (ValueError, OSError):
+                st.error('재해석하지 못했습니다. 날짜 확인 체크, 원본 파일 무결성·권한을 확인하세요. 기존 분석은 변경하지 않았습니다.')
+        if profile['default_window']['start'] and st.button('로그 범위로 맞추기', key=prefix+'_fit_range'):
+            _clear_window_state(prefix)
+            st.rerun()
+        if view:
+            st.success('현재 화면은 원본을 다시 읽은 임시 분석입니다. 기존 저장 결과와 원본은 변경하지 않았습니다.')
+            if view.encoding_changes:
+                st.caption('인코딩 재확인: '+', '.join(f"{x['file_id']} {x['before']} → {x['after']}" for x in view.encoding_changes))
     initial = st.session_state.get(prefix+'_config')
     if initial is None:
-        lo, hi = _defaults(case, manifest)
-        initial = {'lo': lo, 'hi': hi, 'base': None, 'base_lo': '', 'base_hi': '',
+        w = profile['default_window']
+        initial = {'lo': w['start'], 'hi': w['end'], 'base': None, 'base_lo': '', 'base_hi': '',
                    'confirmed': False, 'ratio': 3.0, 'minimum': 10.0, 'repeat': 3, 'bucket': 60}
     else:
         initial = dict(initial)
-    st.caption('V4.3 개발본 · Stitch 데스크톱 시안 기반 · 기존 분석/원본/문의 데이터는 변경하지 않습니다.')
     from .lifecycle import list_cases
     available = list_cases(case.parent)
     if case not in available:
@@ -159,21 +215,24 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
                      'confirmed':confirmed,'ratio':ratio,'minimum':minimum,'repeat':repeat,'bucket':bucket}
             st.session_state[prefix+'_config']=initial
     if not initial['lo'] or not initial['hi']:
-        st.info('날짜 근거가 없습니다. 조사 조건에서 발생 구간을 직접 지정하세요. 오늘 날짜를 임의로 부여하지 않습니다.')
+        st.info('날짜 있는 인식 자료가 없습니다. 위 자료 인식 상태에서 기준 날짜를 확인하고 원본 재해석을 실행하세요. 오늘 날짜나 조회 시작일을 자동 적용하지 않습니다.')
         return
     try:
         window=Window(initial['lo'],initial['hi']);window.bounds()
-        signature=source_signature(case,manifest)
         baseline_case=Path(initial['base']) if initial['base'] else None
         baseline_manifest=_get_manifest(baseline_case) if baseline_case else None
         base_sig=source_signature(baseline_case,baseline_manifest) if baseline_case else None
+        if baseline_case and baseline_case.resolve() == case.resolve() and view:
+            baseline_case, baseline_manifest = event_case, effective
         identity=hashlib.sha256(json.dumps([signature,base_sig,initial],sort_keys=True).encode()).hexdigest()
         cached=st.session_state.get('_v43_job_cache')
         if cached is None or cached[0]!=identity:
-            data=diagnose_jobs(case,manifest,window,baseline_case=baseline_case,baseline_manifest=baseline_manifest,
+            data=diagnose_jobs(event_case,effective,window,baseline_case=baseline_case,baseline_manifest=baseline_manifest,
                 baseline_window=Window(initial['base_lo'],initial['base_hi']) if baseline_case else None,
                 same_agent_confirmed=initial['confirmed'],bucket_seconds=initial['bucket'],
                 policy=DiagnosticPolicy(initial['ratio'],initial['minimum'],5,initial['repeat']))
+            data['input_diagnostics'] = inspect_input(event_case, effective, window)
+            data['warnings'] = list(dict.fromkeys(data['warnings'] + [r['message'] for r in data['input_diagnostics']['reasons']]))
             st.session_state['_v43_job_cache']=(identity,data)
         else:
             data=cached[1]
@@ -198,7 +257,9 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
             else:
                 try:
                     salt=st.session_state.setdefault('_v43_trace_salt',secrets.token_bytes(32))
-                    messages=trace_outcomes(case,window,message=message.strip(),service=service.strip(),salt=salt)
+                    messages=trace_outcomes(case,window,message=message.strip(),service=service.strip(),salt=salt,
+                        anchor_date=date.fromisoformat(effective['reference_date']) if view and effective.get('reference_date') and not manifest.get('reference_date') else None,
+                        date_confirmed=bool(view), redetect_encoding=bool(view))
                     st.session_state['_v43_trace_cache']=(trace_id,messages)
                 except (ValueError,OSError,KeyError) as exc:
                     messages=None;st.session_state.pop('_v43_trace_cache',None);st.error(str(exc))
@@ -206,6 +267,8 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
     comparable=st.session_state.get(prefix+'_backlog_comparable',False)
     backlog=backlog_observations(points,comparable=comparable)
     payload=make_payload(data,messages,backlog)
+    payload['input_scope'] = trace_id
+    payload['revision'] = hashlib.sha256((payload['revision']+trace_id).encode()).hexdigest()[:24]
     labels={f['file_id']:ui_file_label(case,f['file_id'],manifest) for f in manifest['files']}
     value=_component(payload=payload,local_labels=labels,key=prefix+'_component',default=None)
     if value and isinstance(value,dict) and value.get('nonce')!=st.session_state.get(prefix+'_last_action'):
@@ -231,7 +294,8 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
         from .source_view import excerpt
         try:
             ref=selected[1]
-            preview=excerpt(case,ref['file_id'],ref['line_start'],ref['line_end'])
+            encoding = next((f['encoding'] for f in effective['files'] if f['file_id'] == ref['file_id']), None) if view else None
+            preview=excerpt(case,ref['file_id'],ref['line_start'],ref['line_end'],encoding_override=encoding)
             st.caption(ui_file_label(case,ref['file_id'],manifest)+' · '+preview['notice'])
             st.code('\n'.join(f"{r['line']:>6}  {r['text']}" for r in preview['lines']),language='text')
         except (ValueError,OSError) as exc:

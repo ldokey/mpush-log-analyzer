@@ -20,7 +20,7 @@ MAX_TIMELINE_POINTS = 1800
 EVENT_KEYS = {"file_id", "line_start", "line_end", "event_type", "clock",
               "occurred_at", "time_quality", "time_date_source", "status", "details", "log_kind", "event_id"}
 SAFE_KIND = {"job_run", "sql_execution", "healthcheck_result", "healthcheck_request",
-             "cns_response", "job_running_skip", "agent_start", "agent_started",
+             "cns_response", "job_running_skip", "job_abnormal_skip", "agent_start", "agent_started",
              "agent_starting", "agent_exit", "agent_config_loading",
              "scheduler_registration", "transport_event", "log_error"}
 

@@ -6,7 +6,7 @@ from .common import RawEvent, parse_clock, sanitized_job_token
 
 RESPONSE = re.compile(r"""['"]?RESPONSE_CODE['"]?\s*:\s*['"]?([A-Z0-9_-]{1,20})""", re.I)
 TARGET = re.compile(r"""['"]?TARGET['"]?\s*:\s*['"]?([A-Za-z_]{1,30})""", re.I)
-RUNNING = re.compile(r"RUNNING state\s*::\s*([A-Z0-9_]{3,64})", re.I)
+RUNNING = re.compile(r"(?:RUNNING|ABNORMAL) state\s*::\s*([A-Z0-9_]{3,64})", re.I)
 EXCEPTION = re.compile(r"\b([A-Za-z_][\w.$]{0,90}(?:Exception|Error))\b")
 
 def _exception_kind(text: str) -> str:
@@ -37,9 +37,9 @@ def _parse_regular(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
                 "interpretation": "request_accepted" if code == "S" else "other_response",
                 "final_delivery_confirmed": False,
             })
-        elif "Can't execute task in RUNNING state" in text:
+        elif "Can't execute task in RUNNING state" in text or "Can't execute task in ABNORMAL state" in text:
             match = RUNNING.search(text)
-            yield RawEvent("job_running_skip", number, number, clock, {
+            yield RawEvent("job_abnormal_skip" if "ABNORMAL state" in text else "job_running_skip", number, number, clock, {
                 "job_name": sanitized_job_token(match.group(1)) if match else None
             })
         elif EXCEPTION.search(text) or re.search(r"\bERROR\b", text, re.I):

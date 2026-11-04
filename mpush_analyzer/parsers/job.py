@@ -2,12 +2,12 @@
 from __future__ import annotations
 import re
 from typing import Iterable, Iterator
-from .common import MAX_RECORD_LINES, RawEvent, finite_float, parse_clock, sanitized_job_token
+from .common import MAX_RECORD_LINES, RawEvent, finite_float, parse_clock, sanitized_job_token, LOG_START
 
 JOB_HEADER = re.compile(r"^\s*##\s+([A-Za-z0-9_]{3,64})\s+작업\s*$")
 METRIC = re.compile(r"##\s*(.+?)\s*:\s*(.*?)\s*$")
-TIMED_NUMBER = re.compile(r"(\d{1,10}(?:\.\d{1,9})?)\s*초")
-TARGET_NUMBER = re.compile(r"(\d{1,10})")
+TIMED_NUMBER = re.compile(r"^\s*(\d{1,10}(?:\.\d{1,9})?(?:[Ee][+-]?\d{1,3})?)\s*초\s*$")
+TARGET_NUMBER = re.compile(r"^\s*((?:\d{1,3}(?:,\d{3})+)|\d{1,10})\s*(?:건)?\s*$")
 TIMESTAMP_ONLY = re.compile(r"^\s*\d{2}:\d{2}:\d{2}\[\d{1,3}\]\s*$")
 KOREAN_TIME = re.compile(r"(?P<h>\d{1,2})시\s*(?P<m>\d{1,2})분\s*(?P<s>\d{1,2})(?:\.(?P<ms>\d{1,3}))?초")
 LIFECYCLE = {
@@ -31,7 +31,7 @@ def _clock_korean(text: str | None) -> str | None:
     return f"{h:02}:{mi:02}:{s:02}.{(m['ms'] or '0').ljust(3, '0')}"
 
 def _tps(text: str) -> float | None:
-    match = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)", text)
+    match = re.fullmatch(r"\s*(\d{1,10}(?:\.\d{1,9})?(?:[Ee][+-]?\d{1,3})?)\s*(?:건)?\s*", text)
     return finite_float(match.group(1)) if match else None
 
 
@@ -43,6 +43,8 @@ def _summary(lines: list[tuple[int,str]], job_name: str, stamp: str | None, forc
         if not m:
             continue
         key, value = m.group(1).strip(), m.group(2).strip()
+        compact = re.sub(r"\s+", "", key)
+        key = {"작업대상건수":"작업대상건수", "시작시간":"시작시간", "종료시간":"종료시간", "초당작업건수":"초당 작업 건수"}.get(compact, key)
         if key in {"작업대상건수", "시작시간", "종료시간", "초당 작업 건수"}:
             pairs[key] = value
         elif "소요시간" in key and "초당" not in key:
@@ -54,7 +56,8 @@ def _summary(lines: list[tuple[int,str]], job_name: str, stamp: str | None, forc
                         if (duration := finite_float(match.group(1))) is not None:
                             steps[dest] = duration
     match_count = TARGET_NUMBER.search(pairs.get("작업대상건수", ""))
-    target_count = int(match_count.group(1)) if match_count else None
+    digits = match_count.group(1).replace(",", "") if match_count else ""
+    target_count = int(digits) if digits and len(digits) <= 10 else None
     if target_count is not None and target_count > 1_000_000_000:
         target_count = None
     duration_match = TIMED_NUMBER.search(pairs.get("total", ""))
@@ -83,10 +86,13 @@ def parse(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
     recent_stamp: str | None = None
     for number, line in lines:
         clock = parse_clock(line)
-        match = JOB_HEADER.match(line)
+        prefix = LOG_START.match(line)
+        structural = line[prefix.end():] if prefix else line
+        match = JOB_HEADER.match(structural)
         if match:
             if job_name and active:
                 yield _summary(active, job_name, recent_stamp)
+            recent_stamp = clock or recent_stamp
             job_name = sanitized_job_token(match.group(1))
             active = [(number, line)] if job_name is not None else []
             continue

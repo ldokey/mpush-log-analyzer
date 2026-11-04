@@ -83,6 +83,8 @@ def masked_line(line: str) -> tuple[str, bool]:
     if "서버에서 받은 문자열" in line or "RESPONSE_CODE" in line:
         if m := CODE.search(line):
             return prefix + "CNS RESPONSE_CODE: " + m.group(1).upper(), False
+    if "Can't execute task in ABNORMAL state" in line:
+        return prefix + "Job ABNORMAL 상태로 실행 건너뛰기", False
     if "Can't execute task in RUNNING state" in line:
         return prefix + "Job RUNNING 상태로 실행 건너뛰기", False
     if m := EXCEPTION.search(line):
@@ -97,8 +99,10 @@ def masked_line(line: str) -> tuple[str, bool]:
 
 def excerpt(
     case_dir: Path, file_id: str, first_line: int, last_line: int,
-    *, context: int = 1,
+    *, context: int = 1, encoding_override: str | None = None,
 ) -> dict[str, Any]:
+    if encoding_override is not None and encoding_override not in {"utf-8", "utf-8-sig", "utf-8-replace", "cp949"}:
+        raise ValueError("지원하지 않는 근거 조회 인코딩입니다.")
     if not 0 <= context <= MAX_CONTEXT:
         raise ValueError("주변 로그 표시 범위를 확인해 주세요.")
     if not isinstance(first_line, int) or not isinstance(last_line, int):
@@ -114,7 +118,7 @@ def excerpt(
     hi = min(last_line + context, lo + MAX_SHOW_LINES - 1)
     lines = []
     masked_count = 0
-    encoding = selected["encoding"]
+    encoding = encoding_override or selected["encoding"]
     codec = "utf-8" if encoding == "utf-8-replace" else encoding
     with path.open("r", encoding=codec, errors="replace") as source:
         for n, raw in enumerate(islice(source, lo - 1, hi), start=lo):
