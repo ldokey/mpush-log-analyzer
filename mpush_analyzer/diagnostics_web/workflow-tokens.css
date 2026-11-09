@@ -1,0 +1,46 @@
+:root {
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-subtle: #f1f5f9;
+      --bg-muted: #e2e8f0;
+      
+      --border-light: #e2e8f0;
+      --border-subtle: #cbd5e1;
+      --border-strong: #94a3b8;
+      
+      --text-main: #0f172a;
+      --text-sub: #334155;
+      --text-muted: #64748b;
+      --text-dim: #94a3b8;
+      
+      --brand-indigo: #4338ca;
+      --brand-indigo-light: #eef2ff;
+      --brand-indigo-border: #c7d2fe;
+      
+      --status-amber: #d97706;
+      --status-amber-bg: #fffbeb;
+      --status-amber-border: #fef3c7;
+      
+      --status-rose: #be123c;
+      --status-rose-bg: #fff1f2;
+      --status-rose-border: #fecdd3;
+      
+      --status-blue: #0284c7;
+      --status-blue-bg: #f0f9ff;
+      --status-blue-border: #bae6fd;
+      
+      --status-emerald: #059669;
+      --status-emerald-bg: #ecfdf5;
+      --status-emerald-border: #a7f3d0;
+      
+      --font-system: -apple-system, BlinkMacSystemFont, "Pretendard", "Segoe UI", Roboto, "Noto Sans KR", Apple SD Gothic Neo, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      
+      --radius-sm: 4px;
+      --radius-md: 6px;
+      --radius-lg: 8px;
+      --radius-xl: 12px;
+      
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+    }

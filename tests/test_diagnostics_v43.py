@@ -338,16 +338,19 @@ def test_new_navigation_and_native_message_consent(tmp_path,monkeypatch):
     monkeypatch.setattr(ui,'_component',component)
     monkeypatch.setattr(lifecycle,'list_cases',lambda _: [case])
     app=AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'),default_timeout=60).run()
-    app=next(r for r in app.radio if r.label=='분석 메뉴').set_value('실행·발송·성능').run()
+    from ui_steps import open_analysis
+    app=open_analysis(app)
     assert not app.exception,[x.message for x in app.exception]
-    assert seen['payload']['messages'] is None
-    app=next(b for b in app.button if b.label=='메시지 결과 조회').click().run()
-    assert not app.exception and seen['payload']['messages'] is None
-    next(x for x in app.checkbox if '해시 검증한 원본' in x.label).check()
-    app=next(b for b in app.button if b.label=='메시지 결과 조회').click().run()
+    assert seen['payload']['lookup'] is None
+    app=next(b for b in app.button if b.label=='debug에서 찾기').click().run()
+    assert not app.exception and seen['payload']['lookup'] is None
+    next(x for x in app.text_input if x.label=='MESSAGE_SEQNO (필수)').set_value('SYNTH_MESSAGE_1')
+    next(x for x in app.checkbox if '원본을 로컬에서' in x.label).check()
+    app=next(b for b in app.button if b.label=='debug에서 찾기').click().run()
     assert not app.exception,[x.message for x in app.exception]
-    assert seen['payload']['messages'] is not None, {'errors':[e.value for e in app.error],'warnings':[e.value for e in app.warning],'checks':[(x.label,x.value) for x in app.checkbox]}
-    assert seen['payload']['messages']['summary']['success']==1
+    assert seen['payload']['lookup'] is not None, {'errors':[e.value for e in app.error],'warnings':[e.value for e in app.warning],'checks':[(x.label,x.value) for x in app.checkbox]}
+    assert seen['payload']['lookup']['total_matches']==1
+    assert seen['payload']['lookup']['rows'][0]['primary']['state']=='success'
     serialized=json.dumps(seen['payload'],ensure_ascii=False)
     assert 'SYNTH_MESSAGE_1' not in serialized
 

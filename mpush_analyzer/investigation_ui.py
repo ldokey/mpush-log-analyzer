@@ -140,13 +140,13 @@ def render_chains(case,manifest,window):
 
 def render_compare(case,manifest,window):
     st.markdown('### 정상 기준 구간과 장애 조사 구간 비교')
-    candidates=list_cases(case.parent)
-    base=st.selectbox('정상 기준 분석 작업',candidates,format_func=case_title,key='inv_baseline_'+case.name)
+    base=case
+    st.caption('현재 분석의 정상 시간대만 비교합니다. 다른 Agent나 별도 분석 작업을 결합하지 않습니다.')
     default_start=iso(instant(window.start)-timedelta(days=1));default_end=iso(instant(window.end)-timedelta(days=1))
     with st.form('inv_compare_form_'+case.name):
         start=st.text_input('기준 구간 시작 (KST)',value=default_start)
         end=st.text_input('기준 구간 종료 (KST)',value=default_end)
-        confirm=st.checkbox('같은 Agent이며 비교 가능한 수집 범위인지 확인했습니다.')
+        confirm=st.checkbox('기준 시간대를 정상 구간으로 비교할 수 있음을 확인했습니다.')
         submitted=st.form_submit_button('동일 길이 구간 비교')
     key='inv_comparison_'+case.name
     bmanifest=_get_manifest(base)
@@ -311,7 +311,6 @@ def render_reference(case,manifest):
     config=manifest.get('config_summary') or {}
     st.markdown('#### agent.ini의 안전한 설정과 관측 범위')
     st.dataframe([{'항목':'debug 설정','값':str((config.get('agent') or {}).get('debug_enabled'))},
-                  {'항목':'HA 사용 설정','값':str((config.get('ha') or {}).get('enabled'))},
                   {'항목':'DBMS','값':(config.get('dbms') or {}).get('type','미제공')}],hide_index=True)
     if (config.get('agent') or {}).get('debug_enabled') is False:
         st.caption('제공된 설정은 debug=false입니다. 현재 로그와 동일한 배포 시점인지 확인하세요. debug 로그가 없다는 것만으로 비정상이라 판단하지 않습니다.')
@@ -328,7 +327,6 @@ def render_reference(case,manifest):
         st.caption(parsed['note']);st.caption('XML SHA-256: '+parsed['sha256'])
         if parsed['schedules']:st.dataframe(parsed['schedules'],hide_index=True,width='stretch')
         if parsed['debug_flags']:st.dataframe(parsed['debug_flags'],hide_index=True)
-        if parsed['ha_mentions_in_comments']:st.warning('HA Job 이름이 XML 주석에 나타납니다. 다른 활성 설정이 있는지 확인해야 하며 HA 미동작을 확정하지 않습니다.')
         if not parsed['schedules'] and not parsed['debug_flags']:st.info('지원하는 예약/debug 참고 항목을 찾지 못했습니다. 핵심 로그 분석은 계속 사용할 수 있습니다.')
         st.caption('선택 XML은 이 브라우저 세션에서만 참고하며 원문·비밀번호·서버 주소를 저장하지 않습니다.')
     from .investigation_reference import crosscheck_config

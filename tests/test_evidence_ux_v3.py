@@ -128,6 +128,8 @@ def test_streamlit_v3_is_readable_without_raw_findings_json(tmp_path: Path, monk
     monkeypatch.setattr(lifecycle, "list_cases", lambda _: [case])
     test = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"),
                              default_timeout=40).run()
+    from ui_steps import open_analysis
+    test=open_analysis(test,advanced=True)
     assert not test.exception, [x.message for x in test.exception]
     headings_first = [x.value for x in test.markdown]
     assert any("로그 근거 한눈에 보기" in h for h in headings_first)

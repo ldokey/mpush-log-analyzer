@@ -255,7 +255,7 @@ def test_ui_no_date_then_explicit_date_recovery(tmp_path,monkeypatch):
     seen={};monkeypatch.setattr(ui,'_component',lambda **kw:seen.update(kw));monkeypatch.setattr(lifecycle,'list_cases',lambda _: [c])
     code=f"from pathlib import Path\nfrom mpush_analyzer.diagnostics_ui import render_diagnostics\nfrom mpush_analyzer.pipeline import _get_manifest\nc=Path({str(c)!r})\nrender_diagnostics(c,_get_manifest(c),{{}})\n"
     at=AppTest.from_string(code,default_timeout=60).run()
-    assert not at.exception and not seen
+    assert not at.exception and seen['payload']['jobs']['jobs']==[]
     next(d for d in at.date_input if '날짜 없는' in d.label).set_value(DAY)
     next(c for c in at.checkbox if '실제 발생 기준일' in c.label).check()
     at=next(b for b in at.button if b.label=='원본 재해석 (기존 분석 보존)').click().run()

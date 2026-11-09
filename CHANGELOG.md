@@ -1,5 +1,15 @@
 # Changelog
 
+## v4.4 development — 2026-11-09 (feature branch only; not released)
+
+- Reorganized the desktop workflow into import → focused findings → inquiry/notes → export, with lazy screen loading and common Stitch-derived design styles.
+- Replaced exception-class-first summaries with evidence-backed connection, network, database and resource failure explanations, retaining uncertainty and masked source references.
+- Added native debug message search across key/value, JSON and LMultiData table records; missing-service matches stay unconfirmed, SQL and body text cannot stand in for final delivery evidence.
+- Collapsed routine fast SELECT/zero-target Job noise by default while preserving slow, failed, incomplete, write operations, full raw records and advanced investigation.
+- Removed multi-Agent/HA selection UI; kept existing log job names and read-only legacy analysis available.
+- Synthetic verification: 440 pytest cases and 50 desktop browser checks (1280/1440/1920px) on macOS. No native Windows or customer-specific acceptance claimed.
+- No public main/release change, no customer log upload, no automatic operations.
+
 ## v4.3.1 development — 2026-11-04 (not released)
 
 - Fixed timestamp-prefixed Job headers, clock-only log date absence, hourly/minute date detection, UTF-8/CP949 chunk boundaries and ABNORMAL skip observations.

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import re
 from typing import Iterable
+from .error_semantics import observed_semantics, REASON_PATTERNS, structural_error_text
 
 MAX_CHAIN_NODES = 24
 CLASS = re.compile(r'\b((?:[A-Za-z_][A-Za-z0-9_$]*\.)*[A-Za-z_][A-Za-z0-9_$]{0,54}(?:Exception|Error))\b')
@@ -29,15 +30,20 @@ def continuation(text: str) -> bool:
 
 
 def has_exception(text: str) -> bool:
+    text=structural_error_text(text)
+    if any(pattern.search(text) for pattern in REASON_PATTERNS.values()):
+        return True
     if not any(token in text for token in ('Exception','Error','ERROR')):
         return False
     return bool(CLASS.search(text) or re.search(r'\bERROR\b', text))
 
 
 def chain_details(lines: Iterable[tuple[int, str]], *, incomplete: bool = False) -> dict:
-    nodes = []; reasons = set(); jobs = set(); frames = 0; omitted = 0
+    lines = list(lines)
+    semantics = observed_semantics(lines)
+    nodes = []; reasons = set(semantics["reason_codes"]); jobs = set(); frames = 0; omitted = 0
     for number, text in lines:
-        value = body(text)
+        value = body(structural_error_text(text))
         if FRAME.match(value):
             frames += 1
         if m := JOB.search(value):
@@ -60,6 +66,7 @@ def chain_details(lines: Iterable[tuple[int, str]], *, incomplete: bool = False)
         for code, pattern in REASONS.items():
             if pattern.search(value): reasons.add(code)
     return {
+        **semantics,
         'exception_class': nodes[0]['class'] if nodes else 'unspecified',
         'stack_frame_count': frames,
         'exception_chain': nodes,
@@ -98,6 +105,21 @@ def chain_label(details: dict, first_line: int = 1, last_line: int = 2**31) -> s
     return ''.join(pieces)
 
 
+def attach_preamble(block, text):
+    """Only an adjacent explicit failure header may introduce its wrapper stack."""
+    from .parsers.common import parse_clock
+    from datetime import time
+    text=structural_error_text(text)
+    if not block or len(block)>3 or not CLASS.search(text) or continuation(text):return False
+    if any(CLASS.search(value) for _,value in block):return False
+    if not any(re.search(r'Connection execute error|http connection|\bERROR\b',value,re.I) for _,value in block):return False
+    a,b=parse_clock(block[-1][1]),parse_clock(text)
+    if a is None or b is None:return False
+    def seconds(v):
+        t=time.fromisoformat(v);return t.hour*3600+t.minute*60+t.second+t.microsecond/1e6
+    return 0<=seconds(b)-seconds(a)<=1
+
+
 def parse_mixed(lines, normal_parser):
     """Wrap info/debug line parsers; stack continuation never creates a new error."""
     from .parsers.common import RawEvent, MAX_RECORD_LINES, parse_clock
@@ -107,12 +129,14 @@ def parse_mixed(lines, normal_parser):
                         chain_details(block,incomplete=partial), 'incomplete' if partial else 'observed')
     for number,text in lines:
         current = parse_clock(text)
-        attached = bool(block and (continuation(text) or (current is None and CLASS.search(text)
+        preamble = attach_preamble(block, text)
+        attached = preamble or bool(block and (continuation(text) or (current is None and CLASS.search(text)
                         and not any(CLASS.search(value) for _,value in block)))
                         and (current is None or current == clock))
         if block and not attached:
             yield emit(); block=[];clock=None
         if attached:
+            if preamble:clock=current
             block.append((number,text))
             if len(block) >= MAX_RECORD_LINES:
                 yield emit(True);block=[];clock=None

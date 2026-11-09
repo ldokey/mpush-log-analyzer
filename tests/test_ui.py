@@ -8,10 +8,8 @@ def test_streamlit_app_boots_without_uploaded_data():
     test_app = AppTest.from_file(str(path), default_timeout=15).run()
     assert len(test_app.exception) == 0, [str(x.message) for x in test_app.exception]
     assert any("MPushAgent Log Analyzer" in x.value for x in test_app.title)
-    assert len(test_app.get("file_uploader")) >= 2
-    # Nested incident tabs are rendered inside the dashboard; ensure top-level
-    # navigation still appears in the intended order without forbidding nesting.
-    labels = [tab.label for tab in test_app.tabs]
-    expected = ["문의·해결 기록", "분석 대시보드", "자료 가져오기", "사례 라이브러리", "내보내기·관리"]
-    assert all(label in labels for label in expected)
-    assert [labels.index(label) for label in expected] == sorted(labels.index(label) for label in expected)
+    assert len(test_app.get("file_uploader")) == 1
+    nav=next(x for x in test_app.radio if x.label=='업무 단계')
+    assert nav.options==['1 자료 가져오기','2 분석 결과','3 문의·기록','4 내보내기']
+    assert nav.value=='1 자료 가져오기'
+    assert not any(x.label=='분석 작업 선택' for x in test_app.selectbox)

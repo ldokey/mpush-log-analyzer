@@ -28,7 +28,7 @@ INPUT_NAME = re.compile(r"^[a-z0-9_]+\.(?:log|txt|ini)$")
 CASE_NAME = re.compile(r"^analysis_[a-f0-9]{32}$")
 CHUNK_SIZE = 10000
 MERGE_FAN_IN = 24
-PARSER_REVISION = "4.3.1-input-recovery-1"
+PARSER_REVISION = "4.4-focused-investigation-1"
 
 
 def _safe_source(case_dir: Path, entry: dict[str, Any]) -> Path:

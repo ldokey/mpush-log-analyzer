@@ -18,8 +18,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from .diagnostics import DiagnosticPolicy, diagnose_jobs, backlog_observations
-from .investigation import Window, instant, iso, population
+from .investigation import Window, instant, iso, population, quality
 from .message_outcomes import trace_outcomes
+from .debug_lookup import search_debug
+from .focus_analysis import focus_summary
 from .pipeline import _get_manifest, PARSER_REVISION
 from .diagnostics_input import inspect_input, reparse_view
 from .support_store import ui_file_label, case_title
@@ -52,8 +54,8 @@ Actual raw scans and evidence reads additionally perform the existing SHA check.
     return hashlib.sha256(json.dumps([PARSER_REVISION, str(case.resolve()), manifest, stat], sort_keys=True).encode()).hexdigest()
 
 
-def make_payload(jobs: dict, messages: dict | None, backlog: dict) -> dict:
-    data = copy.deepcopy({'jobs': jobs, 'messages': messages, 'backlog': backlog})
+def make_payload(jobs: dict, messages: dict | None, backlog: dict, *, focus: dict | None = None, lookup: dict | None = None) -> dict:
+    data = copy.deepcopy({'jobs': jobs, 'messages': messages, 'backlog': backlog, 'focus': focus, 'lookup': lookup})
     # Baseline evidence belongs to another analysis; do not relabel it as current.
     for job in data['jobs'].get('jobs', []):
         before = job.get('baseline')
@@ -69,6 +71,15 @@ def make_payload(jobs: dict, messages: dict | None, backlog: dict) -> dict:
                 and type(values[1]) is int and type(values[2]) is int and 1 <= values[1] <= values[2]):
             references.append({k:ref.get(k) for k in ('file_id', 'line_start', 'line_end', 'occurred_at')})
             seen.add(values)
+    if focus:
+        for group in focus.get('errors', []):
+            for ref in group['refs']: add(ref)
+        for row in focus.get('attention_rows', []): add(row['ref'])
+    if lookup:
+        for row in lookup.get('rows', []):
+            add(row['ref'])
+            if row.get('header_line'):
+                add({**row['ref'], 'line_start':row['header_line'], 'line_end':row['header_line']})
     for j in data['jobs'].get('jobs', []):
         c = j.get('current') or {}
         for x in c.get('delays', []): add(x['ref'])
@@ -93,7 +104,7 @@ def validate_action(value: Any, payload: dict) -> dict | None:
     if not isinstance(value.get('nonce'), str) or not re.fullmatch(r'[0-9a-f-]{36}', value['nonce']):
         raise ValueError('화면 요청 형식이 올바르지 않습니다.')
     kind = value.get('action')
-    if kind in {'configure', 'configure_messages'}:
+    if kind in {'configure', 'configure_messages', 'all_evidence', 'input_quality'}:
         return {'action': kind, 'nonce': value['nonce']}
     if kind == 'evidence':
         index = value.get('index')
@@ -136,7 +147,7 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
         cached_view = None
     view = cached_view[1] if cached_view else None
     event_case, effective = (view.event_case, view.manifest) if view else (case, manifest)
-    signature = hashlib.sha256(json.dumps([original_signature, effective, bool(view)], sort_keys=True).encode()).hexdigest()
+    signature = hashlib.sha256(json.dumps([original_signature, effective, str(view.event_case) if view else None], sort_keys=True).encode()).hexdigest()
     cached_profile = st.session_state.get('_v43_input_profile')
     if not cached_profile or cached_profile[0] != signature:
         profile = inspect_input(event_case, effective)
@@ -144,8 +155,8 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
     else:
         profile = cached_profile[1]
     old_snapshot = not view and result.get('metrics', {}).get('parser_revision') != PARSER_REVISION
-    st.caption('V4.3.1 입력 보정본 · Stitch 데스크톱 · 원본·기존 분석·문의 데이터 보존')
-    with st.expander('자료 인식 상태 · 원본 재해석', expanded=old_snapshot or not profile['counts'].get('jobs') or bool(profile['counts'].get('undated'))):
+    st.caption('실패·지연과 메시지 근거를 먼저 확인합니다. 전체 로그와 기존 분석은 보존됩니다.')
+    with st.expander('자료 인식 상태 · 원본 재해석', expanded=st.session_state.get(prefix+'_open_quality',False) or not profile['default_window']['start'] or bool(profile['read_error'])):
         st.caption(f"등록 파일 {len(manifest['files'])}개 / 인식 이벤트 {profile['counts'].get('records',0):,}건 / Job {profile['counts'].get('jobs',0):,}건 / 날짜 없는 이벤트 {profile['counts'].get('undated',0):,}건")
         st.dataframe([{'파일':ui_file_label(case,f['file_id'],manifest), '유형':f['kind'], '줄 수':f['lines'],
             '인식 이벤트':f['records'], 'Job':f['jobs'], '날짜 없는 이벤트':f['undated'],
@@ -183,24 +194,20 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
                    'confirmed': False, 'ratio': 3.0, 'minimum': 10.0, 'repeat': 3, 'bucket': 60}
     else:
         initial = dict(initial)
-    from .lifecycle import list_cases
-    available = list_cases(case.parent)
-    if case not in available:
-        available.insert(0, case)
+    if initial.get('base') and Path(initial['base']).resolve() != case.resolve():
+        initial['base'] = None
+        initial['confirmed'] = False
     with st.expander('조사 조건 · 정상 기준 비교', expanded=st.session_state.get(prefix+'_open_config', not bool(initial['lo']))):
         with st.form(prefix+'_conditions'):
             a,b=st.columns(2)
             lo=a.text_input('조사 시작 (KST, 포함)', value=initial['lo'], key=prefix+'_lo')
             hi=b.text_input('조사 종료 (KST, 미포함)', value=initial['hi'], key=prefix+'_hi')
-            options=[None]+available
-            selected_base=Path(initial['base']) if initial.get('base') else None
-            base=st.selectbox('정상 기준 분석 (선택)', options,
-                index=options.index(selected_base) if selected_base in options else 0,
-                format_func=lambda x:'기준 구간 사용 안 함' if x is None else case_title(x), key=prefix+'_base')
+            use_baseline=st.checkbox('같은 로그의 정상 시간대와 비교', value=bool(initial.get('base')), key=prefix+'_use_baseline')
+            base=case if use_baseline else None
             a,b=st.columns(2)
             base_lo=a.text_input('기준 시작 (KST, 포함)', value=initial['base_lo'], key=prefix+'_base_lo')
             base_hi=b.text_input('기준 종료 (KST, 미포함)', value=initial['base_hi'], key=prefix+'_base_hi')
-            confirmed=st.checkbox('동일 Agent이며 두 구간의 수집 조건을 비교할 수 있음을 확인했습니다.',
+            confirmed=st.checkbox('기준 시간대를 정상 구간으로 비교할 수 있음을 확인했습니다.',
                                    value=initial['confirmed'],key=prefix+'_confirmed')
             st.caption('비교 시 같은 길이의 구간을 사용합니다. 같은 분석의 겹치는 구간은 정상 기준으로 적용하지 않습니다.')
             a,b,c,d=st.columns(4)
@@ -215,11 +222,11 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
                      'confirmed':confirmed,'ratio':ratio,'minimum':minimum,'repeat':repeat,'bucket':bucket}
             st.session_state[prefix+'_config']=initial
     if not initial['lo'] or not initial['hi']:
-        st.info('날짜 있는 인식 자료가 없습니다. 위 자료 인식 상태에서 기준 날짜를 확인하고 원본 재해석을 실행하세요. 오늘 날짜나 조회 시작일을 자동 적용하지 않습니다.')
-        return
+        st.info('날짜가 없어 시간별 Job·성능은 보류합니다. 메시지 번호 검색과 오류 내용 확인은 가능하며, 날짜 확인 후 원본 재해석으로 시간 분석을 복구하세요.')
     try:
-        window=Window(initial['lo'],initial['hi']);window.bounds()
-        baseline_case=Path(initial['base']) if initial['base'] else None
+        window=Window(initial['lo'],initial['hi']) if initial['lo'] and initial['hi'] else None
+        if window: window.bounds()
+        baseline_case=Path(initial['base']) if initial['base'] and window else None
         baseline_manifest=_get_manifest(baseline_case) if baseline_case else None
         base_sig=source_signature(baseline_case,baseline_manifest) if baseline_case else None
         if baseline_case and baseline_case.resolve() == case.resolve() and view:
@@ -227,10 +234,13 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
         identity=hashlib.sha256(json.dumps([signature,base_sig,initial],sort_keys=True).encode()).hexdigest()
         cached=st.session_state.get('_v43_job_cache')
         if cached is None or cached[0]!=identity:
-            data=diagnose_jobs(event_case,effective,window,baseline_case=baseline_case,baseline_manifest=baseline_manifest,
-                baseline_window=Window(initial['base_lo'],initial['base_hi']) if baseline_case else None,
-                same_agent_confirmed=initial['confirmed'],bucket_seconds=initial['bucket'],
-                policy=DiagnosticPolicy(initial['ratio'],initial['minimum'],5,initial['repeat']))
+            if window:
+                data=diagnose_jobs(event_case,effective,window,baseline_case=baseline_case,baseline_manifest=baseline_manifest,
+                    baseline_window=Window(initial['base_lo'],initial['base_hi']) if baseline_case else None,
+                    same_agent_confirmed=initial['confirmed'],bucket_seconds=initial['bucket'],
+                    policy=DiagnosticPolicy(initial['ratio'],initial['minimum'],5,initial['repeat']))
+            else:
+                data={'jobs':[], 'window':{'start':None,'end':None,'seconds':None}, 'baseline_window':None, 'policy':{}, 'bucket_seconds':60, 'tails':[], 'coverage':quality(effective), 'warnings':[], 'note':'날짜가 없어 시간별 집계를 보류합니다.', 'performance_note':'날짜 없는 자료에서 처리율을 계산하지 않습니다.'}
             data['input_diagnostics'] = inspect_input(event_case, effective, window)
             data['warnings'] = list(dict.fromkeys(data['warnings'] + [r['message'] for r in data['input_diagnostics']['reasons']]))
             st.session_state['_v43_job_cache']=(identity,data)
@@ -238,35 +248,45 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
             data=cached[1]
     except (ValueError,OSError,KeyError) as exc:
         st.error(str(exc));return
-    trace_id=hashlib.sha256(json.dumps([signature,window.start,window.end]).encode()).hexdigest()
-    trace_cache=st.session_state.get('_v43_trace_cache')
-    messages=trace_cache[1] if trace_cache and trace_cache[0]==trace_id else None
-    if trace_cache and trace_cache[0]!=trace_id:
-        st.session_state.pop('_v43_trace_cache',None)
-    with st.expander('메시지 원본 조회 · 로컬 검색',expanded=st.session_state.get(prefix+'_open_messages',False)):
+    trace_id=hashlib.sha256(json.dumps([signature,window.start if window else None,window.end if window else None]).encode()).hexdigest()
+    lookup_cache=st.session_state.get('_v44_lookup_cache')
+    lookup=lookup_cache[1] if lookup_cache and lookup_cache[0]==trace_id else None
+    messages=None  # Legacy strict result tracing remains available in advanced investigation.
+    with st.expander('메시지 번호로 debug 검색', expanded=st.session_state.get(prefix+'_open_messages',False)):
         with st.form(prefix+'_message_query'):
             a,b=st.columns(2)
-            service=a.text_input('SERVICE_SEQNO (선택)',max_chars=64,key=prefix+'_service')
-            message=b.text_input('MESSAGE_SEQNO (선택)',max_chars=64,key=prefix+'_message')
-            consent=st.checkbox('해시 검증한 원본 로그를 로컬에서 읽어 메시지 결과를 조회합니다.',key=prefix+'_trace_consent')
-            scan=st.form_submit_button('메시지 결과 조회',type='primary')
-        st.caption('식별값이 명시된 레코드만 연결합니다. 본문·SQL·식별값은 새 요약에 포함하지 않습니다. 조회 구간은 위에서 적용한 구간입니다.')
+            message=a.text_input('MESSAGE_SEQNO (필수)',max_chars=64,key=prefix+'_message')
+            service=b.text_input('SERVICE_SEQNO (선택)',max_chars=64,key=prefix+'_service')
+            a,b=st.columns(2)
+            identifier=a.selectbox('번호 종류', ['MESSAGE_SEQNO','AGENT_MESSAGE_SEQNO'],key=prefix+'_id_kind')
+            secondary=b.checkbox('info·err도 함께 검색',value=False,key=prefix+'_secondary')
+            undated=st.checkbox('날짜 없는 일치 기록도 별도로 표시',value=True,key=prefix+'_undated_search')
+            consent=st.checkbox('원본을 로컬에서 읽어 메시지 번호를 검색합니다.',key=prefix+'_trace_consent')
+            scan=st.form_submit_button('debug에서 찾기',type='primary')
+        st.caption('dbwrap은 검색 대상이 아닙니다. 서비스 번호가 빠진 기록도 별도 표시하며, 검색 결과를 최종 발송 성공으로 간주하지 않습니다.')
         if scan:
             if not consent:
                 st.warning('원본 조회 동의가 필요합니다.')
             else:
                 try:
                     salt=st.session_state.setdefault('_v43_trace_salt',secrets.token_bytes(32))
-                    messages=trace_outcomes(case,window,message=message.strip(),service=service.strip(),salt=salt,
+                    lookup=search_debug(case,window,message=message.strip(),service=service.strip(),salt=salt,
+                        identifier_field=identifier,include_secondary=secondary,include_undated=undated,
                         anchor_date=date.fromisoformat(effective['reference_date']) if view and effective.get('reference_date') and not manifest.get('reference_date') else None,
-                        date_confirmed=bool(view), redetect_encoding=bool(view))
-                    st.session_state['_v43_trace_cache']=(trace_id,messages)
+                        date_confirmed=bool(view),redetect_encoding=bool(view))
+                    st.session_state['_v44_lookup_cache']=(trace_id,lookup)
                 except (ValueError,OSError,KeyError) as exc:
-                    messages=None;st.session_state.pop('_v43_trace_cache',None);st.error(str(exc))
+                    lookup=None;st.session_state.pop('_v44_lookup_cache',None);st.error(str(exc))
     points=st.session_state.get(prefix+'_backlog_points',[])
     comparable=st.session_state.get(prefix+'_backlog_comparable',False)
     backlog=backlog_observations(points,comparable=comparable)
-    payload=make_payload(data,messages,backlog)
+    focus_cache=st.session_state.get('_v44_focus_cache')
+    if not focus_cache or focus_cache[0]!=identity:
+        focused=focus_summary(event_case,effective,window,slow_job_seconds=initial['minimum'])
+        st.session_state['_v44_focus_cache']=(identity,focused)
+    else:
+        focused=focus_cache[1]
+    payload=make_payload(data,messages,backlog,focus=focused,lookup=lookup)
     payload['input_scope'] = trace_id
     payload['revision'] = hashlib.sha256((payload['revision']+trace_id).encode()).hexdigest()[:24]
     labels={f['file_id']:ui_file_label(case,f['file_id'],manifest) for f in manifest['files']}
@@ -279,6 +299,10 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
                 st.session_state[prefix+'_open_config']=True;st.rerun()
             elif event['action']=='configure_messages':
                 st.session_state[prefix+'_open_messages']=True;st.rerun()
+            elif event['action']=='all_evidence':
+                st.session_state['workflow_advanced_next']=True;st.rerun()
+            elif event['action']=='input_quality':
+                st.session_state[prefix+'_open_quality']=True;st.rerun()
             elif event['action']=='backlog':
                 updated=points+[event['row']]
                 validated=backlog_observations(updated,comparable=event['comparable'])
@@ -301,7 +325,7 @@ def render_diagnostics(case: Path, manifest: dict, result: dict) -> None:
         except (ValueError,OSError) as exc:
             st.warning(str(exc))
     with st.expander('비식별 요약 다운로드 · 화면 안내'):
-        export={k:payload[k] for k in ('jobs','messages','backlog')}
+        export={k:payload[k] for k in ('jobs','messages','backlog','focus','lookup')}
         st.download_button('비식별 진단 JSON 저장',json.dumps(export,ensure_ascii=False,indent=2),
-            file_name='mpush-diagnostics-v4.3.json',mime='application/json',key=prefix+'_download')
+            file_name='mpush-investigation-v4.4.json',mime='application/json',key=prefix+'_download')
         st.caption('원본 파일명·고객사명·Redmine 주소는 내보내지 않습니다. 대기량 관측은 현재 세션에만 있으므로 필요하면 다운로드하세요.')

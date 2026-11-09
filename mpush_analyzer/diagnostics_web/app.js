@@ -2,11 +2,12 @@
 'use strict';
 (() => {
   const root = document.getElementById('root');
-  const title = {jobs:'Job 실행 진단',messages:'메시지 결과 추적',performance:'처리 성능·대기량'};
+  const title = {overview:'핵심 요약',errors:'오류 원인',lookup:'메시지 검색',jobs:'Job·성능'};
   const statusLabels = {observed:'관측 기록',attention:'확인 필요',insufficient:'자료 부족',not_observed:'실행 미관측',original_success:'원 발송 성공',fallback_success:'문자 대체 성공',final_failure:'최종 실패 관측',original_failure_unresolved:'원 발송 실패·대체 미확인',accepted_unresolved:'요청 수락·결과 미확인',stage_failure_unresolved:'단계 실패·최종 미확인',conflict:'충돌·검토 필요',unknown:'결과 미확인',success:'성공 관측',failure:'실패 관측',unobserved:'미관측'};
   const stageLabels = {claim:'DB 선점',file:'파일 생성',tcp:'TCP 전송',accepted:'요청 수락',result:'결과 수신',db_transfer:'DB 이관'};
   const stageStates = {unobserved:'미관측',marker:'표지 관측',completed:'명시 완료',failed:'명시 실패',mixed:'혼재·확인 필요'};
-  let args = {}, p = {}, revision = '', view = 'jobs', selectedJob = '', selectedMessage = '', jobFilter = '', messageFilter = '', search = '', page = 0, jobPage = 0;
+  let args = {}, p = {}, revision = '', view = 'overview', selectedJob = '', selectedMessage = '', jobFilter = '', messageFilter = '', search = '', page = 0, jobPage = 0;
+  const focusState={error:'',scope:'',lookupPage:0,lookupIndex:0};
   const expectedOrigin = (()=>{try{return new URL(document.referrer).origin}catch{return ''}})();
   const E = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const N = (value, digits=2) => value === null || value === undefined || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('ko-KR',{maximumFractionDigits:digits});
@@ -94,17 +95,33 @@
   }
   function render(){
     const d=p.jobs||{},jobs=d.jobs||[];
+    if(!p.focus&&view==='overview')view='jobs';
     if(!jobs.some(x=>x.name===selectedJob))selectedJob=jobs.find(x=>x.status==='attention')?.name||jobs[0]?.name||'';
-    document.getElementById('stitch-style').textContent=window.MPUSH_STITCH[view].css;
-    root.innerHTML=window.MPUSH_STITCH[view].header+`<nav class="nav-tabs" aria-label="심화 진단 화면">${Object.entries(title).map(([k,label])=>`<button type="button" class="nav-tab ${k===view?'active':''}" aria-current="${k===view?'page':'false'}" data-action="tab" data-view="${k}">${E(label)}</button>`).join('')}</nav><section class="filter-bar"><div class="filter-group"><span class="filter-label">조사 구간</span><span class="filter-input mono">${E(T(d.window?.start))} → ${E(T(d.window?.end))} KST</span>${view!=='messages'?`<label class="filter-item">Job <select id="job-filter" class="filter-select"><option value="">전체 Job</option>${jobs.map(j=>`<option ${j.name===jobFilter?'selected':''} value="${E(j.name)}">${E(j.name)}</option>`).join('')}</select></label>`:''}</div><div class="filter-actions">${button('조사 조건','configure')}${button('비식별 요약','export','',true)}</div></section><main class="main-content">${(d.warnings||[]).map(w=>`<div class="warning">${E(w)}</div>`).join('')}${view==='jobs'?jobsPage():view==='messages'?messagesPage():performancePage()}<footer class="footer-note">V4.3.1 입력 보정본 · 단일 Agent · 원본 변경/운영 조치/외부 자동 전송 없음 · 근거 원문은 마스킹해서 별도 표시합니다.</footer></main>`;
-    const v=root.querySelector('.version-tag');if(v)v.textContent='v4.3.1 입력 보정본';
+    document.getElementById('stitch-style').textContent=window.MPUSH_STITCH.jobs.css;
+    const focused=window.MPUSH_FOCUS_VIEWS({p,E,N,T,chip,panel,empty,evidence,button,state:focusState});
+    const active=(view==='performance'?'jobs':view);
+    const nav=`<nav class="secondary-tabs focus-nav" aria-label="분석 결과 화면">${Object.entries(title).map(([key,label])=>`<button type="button" class="sub-tab nav-tab ${key===active?'active':''}" data-action="tab" data-view="${key}" aria-current="${key===active?'page':'false'}">${E(label)}</button>`).join('')}</nav>`;
+    const context=`<div class="context-row"><div class="scope-info"><span class="scope-tag">단일 Agent</span><span class="time-range">${E(T(d.window?.start))} → ${E(T(d.window?.end))} KST</span></div><div class="context-actions">${button('조사 구간','configure')}${button('자료 점검','input-quality')}${button('비식별 요약','export')}</div></div>`;
+    const jobtools=(view==='jobs'||view==='performance')?`<div class="top-tools">${button('실행 진단','tab','data-view="jobs"',view==='jobs')}${button('처리 성능·대기량','tab','data-view="performance"',view==='performance')}<label>Job <select id="job-filter" class="filter-select"><option value="">전체 Job</option>${jobs.map(j=>`<option value="${E(j.name)}" ${j.name===jobFilter?'selected':''}>${E(j.name)}</option>`).join('')}</select></label></div>`:'';
+    const content=view==='overview'?focused.overview():view==='errors'?focused.errors():view==='lookup'?focused.lookup():view==='performance'?performancePage():jobsPage();
+    const warnings=d.warnings||[];
+    root.innerHTML=nav+context+`<main class="content-area">${jobtools}${content}${warnings.length?`<details class="panel"><summary class="panel-head">자료 범위·판단 한계 ${warnings.length}개</summary><div class="panel-body">${warnings.map(w=>`<p class="footer-note">${E(w)}</p>`).join('')}${button('자료 점검 열기','input-quality')}</div></details>`:''}<footer class="footer-note">V4.4 · 원본 보존 · 자동 운영 조치 없음 · 검색 결과와 최종 발송 결과를 구분합니다.</footer></main>`;
     requestAnimationFrame(frameHeight);
   }
-  root.addEventListener('change',e=>{if(e.target.id==='job-filter'){jobFilter=e.target.value;jobPage=0;if(jobFilter)selectedJob=jobFilter;render();}if(e.target.id==='message-status'){messageFilter=e.target.value;page=0;render();}});
+  root.addEventListener('toggle',frameHeight,true);
+  root.addEventListener('change',e=>{if(e.target.id==='lookup-scope'){focusState.scope=e.target.value;focusState.lookupPage=0;focusState.lookupIndex=0;render();}if(e.target.id==='job-filter'){jobFilter=e.target.value;jobPage=0;if(jobFilter)selectedJob=jobFilter;render();}if(e.target.id==='message-status'){messageFilter=e.target.value;page=0;render();}});
   root.addEventListener('keydown',e=>{if(e.target.id==='message-search'&&e.key==='Enter'){search=e.target.value;page=0;render();}});
   root.addEventListener('click',e=>{const b=e.target.closest('button[data-action]');if(!b||b.disabled)return;
     switch(b.dataset.action){
       case'tab':view=b.dataset.view;render();break;
+      case'focus-error':focusState.error=b.dataset.error;view='errors';render();break;
+      case'focus-select-error':focusState.error=b.dataset.error;render();break;
+      case'focus-lookup':view='lookup';render();break;
+      case'lookup-row':focusState.lookupIndex=Number(b.dataset.index);render();break;
+      case'lookup-prev':focusState.lookupPage--;render();break;
+      case'lookup-next':focusState.lookupPage++;render();break;
+      case'all-evidence':action('all_evidence');break;
+      case'input-quality':action('input_quality');break;
       case'job':selectedJob=b.dataset.job;render();break;
       case'message':selectedMessage=b.dataset.message;render();break;
       case'job-prev':jobPage--;render();break;case'job-next':jobPage++;render();break;
@@ -114,10 +131,10 @@
       case'configure':action('configure');break;
       case'configure-messages':action('configure_messages');break;
       case'backlog-add':{const at=document.getElementById('backlog-time').value,raw=document.getElementById('backlog-count').value,count=Number(raw),comparable=document.getElementById('backlog-confirm').checked;if(!at||raw===''||!Number.isSafeInteger(count)||count<0||count>1e9){window.alert('관측 시각과 0~10억 정수 건수를 입력하세요.');return;}action('backlog',{at,count,comparable});break;}
-      case'export':{const safe={schema:'mpush.diagnostics.v4.3',jobs:p.jobs,messages:p.messages,backlog:p.backlog,notice:'관측 자료 범위 한정. 원본명·식별값·본문·SQL 미포함.'};const url=URL.createObjectURL(new Blob([JSON.stringify(safe,null,2)],{type:'application/json;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='mpush-diagnostics-v4.3.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
+      case'export':{const safe={schema:'mpush.investigation.v4.4',jobs:p.jobs,messages:p.messages,backlog:p.backlog,focus:p.focus,lookup:p.lookup,notice:'관측 자료 범위 한정. 원본명·식별값·본문·SQL 미포함.'};const url=URL.createObjectURL(new Blob([JSON.stringify(safe,null,2)],{type:'application/json;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='mpush-investigation-v4.4.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);break;}
     }
   });
-  function receive(next){const incoming=next.payload||{};if(revision&&revision===incoming.revision&&JSON.stringify(args.local_labels||{})===JSON.stringify(next.local_labels||{})){args=next;return;}const scopeChanged=p.input_scope!==incoming.input_scope;args=next;p=incoming;if(revision!==p.revision){revision=p.revision;selectedMessage='';page=0;const names=new Set((p.jobs?.jobs||[]).map(x=>x.name));if(scopeChanged||!names.has(jobFilter)){jobFilter='';selectedJob='';jobPage=0;}const groups=p.messages?.groups||[];if(scopeChanged||!groups.some(g=>g.status===messageFilter))messageFilter='';if(scopeChanged||(search&&!groups.some(g=>(g.message+' '+g.service).toLowerCase().includes(search.toLowerCase()))))search='';}render();}
+  function receive(next){const incoming=next.payload||{};if(revision&&revision===incoming.revision&&JSON.stringify(args.local_labels||{})===JSON.stringify(next.local_labels||{})){args=next;return;}const scopeChanged=p.input_scope!==incoming.input_scope;args=next;p=incoming;if(revision!==p.revision){focusState.lookupPage=0;focusState.lookupIndex=0;if(scopeChanged){focusState.scope='';focusState.error='';}revision=p.revision;selectedMessage='';page=0;const names=new Set((p.jobs?.jobs||[]).map(x=>x.name));if(scopeChanged||!names.has(jobFilter)){jobFilter='';selectedJob='';jobPage=0;}const groups=p.messages?.groups||[];if(scopeChanged||!groups.some(g=>g.status===messageFilter))messageFilter='';if(scopeChanged||(search&&!groups.some(g=>(g.message+' '+g.service).toLowerCase().includes(search.toLowerCase()))))search='';}render();}
   window.addEventListener('message',e=>{if(e.source!==window.parent||expectedOrigin&&e.origin!==expectedOrigin)return;if(e.data?.type==='streamlit:render')receive(e.data.args||{});});
   window.addEventListener('resize',frameHeight);
   // The deterministic standalone harness is useful for isolated synthetic browser tests.

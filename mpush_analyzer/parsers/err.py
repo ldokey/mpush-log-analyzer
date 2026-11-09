@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Iterable, Iterator
 from .common import MAX_RECORD_LINES, RawEvent, parse_clock
-from ..exception_chain import chain_details, continuation, has_exception, CLASS
+from ..exception_chain import chain_details, continuation, has_exception, CLASS, attach_preamble
 
 
 def _event(block: list[tuple[int,str]], clock: str | None, forced_incomplete: bool = False) -> RawEvent:
@@ -17,14 +17,15 @@ def parse(lines: Iterable[tuple[int,str]]) -> Iterator[RawEvent]:
         clock = parse_clock(line)
         # Explicit Caused by / Suppressed / frame lines with a repeated same
         # timestamp are part of the current stack, not extra error incidents.
-        attached = bool(block and continuation(line) and (clock is None or clock == stamp))
-        new_root = bool(block and CLASS.search(line) and not continuation(line)
+        preamble = attach_preamble(block, line)
+        attached = preamble or bool(block and continuation(line) and (clock is None or clock == stamp))
+        new_root = bool(not preamble and block and CLASS.search(line) and not continuation(line)
                         and any(CLASS.search(text) for _,text in block))
         if block and ((clock is not None and not attached) or new_root):
             yield _event(block, stamp)
             block = []; stamp = None
         if not block and not line.strip(): continue
-        if not block and clock is not None: stamp = clock
+        if (not block or preamble) and clock is not None: stamp = clock
         block.append((number,line))
         if len(block) >= MAX_RECORD_LINES:
             yield _event(block, stamp, True)

@@ -1,0 +1,21 @@
+{
+  "project_id": "9409874347473150518",
+  "device": "DESKTOP",
+  "sources": {
+    "focus": {
+      "screen_id": "4be7f66fd93c41278c3348881fd50e6a",
+      "html_sha256": "98c29eb7b78b02bb1fa0a1be9a6d0a4601afdcbc639beca31f10a16b56aebece",
+      "css_sha256": "5b0083d2ff3b8a59244ec80f9085518daccf3fda6a71f0caeacaa4be3135d003"
+    },
+    "intake": {
+      "screen_id": "6041299b5a1f4edea2579116fc32c679",
+      "html_sha256": "64a514b6d0a6e6a9be1d9a924672c34cbdaf655b8d514b76fed82f2829d6cac0",
+      "css_sha256": "2d635f06e52a22ef8f6a550f020bea862ceb6629fd67efc5b9c6222229638871"
+    }
+  },
+  "adoption": [
+    "Exact focus CSS reused; actual card/issue/evidence classes connected to live data.",
+    "Native intake uses original tokens and upload-guide-collapsed-option hierarchy.",
+    "Mock counts and claims not adopted; no external assets."
+  ]
+}

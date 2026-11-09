@@ -270,6 +270,8 @@ def test_workbench_streamlit_screens_render_synthetic_case(analyzed_case, monkey
         str(Path(__file__).resolve().parents[1] / "app.py"),
         default_timeout=60,
     ).run()
+    from ui_steps import open_analysis
+    app=open_analysis(app,advanced=True)
     assert not app.exception, [x.message for x in app.exception]
     navigation = next(r for r in app.radio if r.label == "분석 메뉴")
     for screen in ("전체 이벤트", "Job 분석", "DB 분석",
@@ -295,6 +297,8 @@ def test_overview_time_window_drills_into_prefiltered_event_list(analyzed_case, 
         str(Path(__file__).resolve().parents[1] / "app.py"),
         default_timeout=60,
     ).run()
+    from ui_steps import open_analysis
+    app=open_analysis(app,advanced=True)
     assert not app.exception
     jump = next(x for x in app.button if x.label == "선택 시간대의 전체 이벤트 조회")
     app = jump.click().run()

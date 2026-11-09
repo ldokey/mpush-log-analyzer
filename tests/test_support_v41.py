@@ -371,9 +371,9 @@ def test_folder_ui_full_inventory_selection_import_flow(tmp_path, monkeypatch):
     app=_widget(app,'button','선택 파일 읽기·분류').click().run();_assert_app(app)
     assert _widget(app,'text_input','Redmine 번호 또는 이슈 링크 (선택)').value=='12345'
     assert _widget(app,'text_input','고객사').value=='TEST_CUSTOMER'
-    _widget(app,'text_input','Agent 구분 (필수)').set_value('A1')
+    assert not any(x.label=='Agent 구분 (필수)' for x in app.text_input)
     _widget(app,'checkbox','선택한 파일들이 같은 Agent 인스턴스의 자료임을 확인했습니다.').check()
-    app=_widget(app,'button','문의에 연결하고 분석').click().run();_assert_app(app)
+    app=_widget(app,'button','분석 시작').click().run();_assert_app(app)
     from mpush_analyzer.lifecycle import list_cases
     cases=list_cases(tmp_path/'workspace');assert len(cases)==1
     assert read_context(cases[0])['issue_key']==redmine_ref('12345',BASE)['key']
@@ -464,6 +464,9 @@ def test_full_app_inquiry_to_dashboard_navigation(tmp_path, monkeypatch):
     source=(Path(__file__).resolve().parents[1]/'app.py').read_text()
     source=source.replace('APP_ROOT = Path(__file__).resolve().parent',f'APP_ROOT = Path({str(tmp_path)!r})')
     app=AppTest.from_string(source,default_timeout=60).run();_assert_app(app)
+    app=_widget(app,'radio','업무 단계').set_value('3 문의·기록').run();_assert_app(app)
     app=_widget(app,'button','이 분석을 대시보드에 선택').click().run();_assert_app(app)
     assert _widget(app,'selectbox','분석 작업 선택').value==case
+    assert not any(x.label=='관리할 분석 작업' for x in app.selectbox)
+    app=_widget(app,'radio','업무 단계').set_value('4 내보내기').run();_assert_app(app)
     assert _widget(app,'selectbox','관리할 분석 작업').value==case

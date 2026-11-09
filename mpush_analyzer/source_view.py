@@ -87,7 +87,17 @@ def masked_line(line: str) -> tuple[str, bool]:
         return prefix + "Job ABNORMAL 상태로 실행 건너뛰기", False
     if "Can't execute task in RUNNING state" in line:
         return prefix + "Job RUNNING 상태로 실행 건너뛰기", False
-    if m := EXCEPTION.search(line):
+    from .error_semantics import observed_semantics, describe_error, structural_error_text
+    semantic=observed_semantics([(1,line)])
+    if semantic['reason_codes']:
+        # Preserve meaning, not an exception's arbitrary message/endpoint.
+        match=EXCEPTION.search(line)
+        cls=match.group(1).rsplit('.',1)[-1] if match else None
+        detail={**semantic,'exception_class':cls} if cls else semantic
+        meaning=describe_error(detail)
+        suffix=' · 예외 유형: '+cls if cls and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{1,55}',cls) else ''
+        return prefix+meaning['title']+' — '+meaning['fact']+suffix, True
+    if m := EXCEPTION.search(structural_error_text(line)):
         name = m.group(1).rsplit(".", 1)[-1]
         if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{1,55}", name):
             return prefix + "예외 유형: " + name, True

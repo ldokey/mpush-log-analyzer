@@ -196,6 +196,8 @@ def test_streamlit_dashboard_synthetic_case(tmp_path: Path, monkeypatch):
     run_complete_analysis(case,knowledge_root=tmp_path/"library")
     monkeypatch.setattr(lifecycle,"list_cases", lambda workspace: [case])
     test=AppTest.from_file(str(Path(__file__).resolve().parents[1]/"app.py"),default_timeout=35).run()
+    from ui_steps import open_analysis
+    test=open_analysis(test,advanced=True)
     assert len(test.exception)==0, [str(x.message) for x in test.exception]
     labels=[x.value for x in test.subheader]
     assert any("로그 분석 워크벤치" in x for x in labels)

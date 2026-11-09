@@ -30,7 +30,7 @@ def _settings(workspace: Path) -> dict:
 
 def _connected_folders(workspace: Path) -> tuple[str, dict]:
     settings = _settings(workspace)
-    with st.expander('고객사 문의 폴더·Redmine 연결 설정', expanded=not bool(settings)):
+    with st.expander('폴더·문의 연결 설정 (선택)', expanded=False):
         root_text = st.text_input('고객사 문의 루트 폴더', value=settings.get('root', ''),
                                  placeholder='Z:\\...\\고객사 문의 파일', key='support_root')
         base = st.text_input('Redmine 기본 주소 (번호만 입력할 때 사용)', value=settings.get('base_url', ''),
@@ -51,15 +51,17 @@ def _connected_folders(workspace: Path) -> tuple[str, dict]:
 
 def render_intake(app_root: Path) -> None:
     workspace = app_root / 'workspace'
-    st.subheader('문의 자료 가져오기 · 로그 및 압축 파일')
-    st.caption('분석·문의 저장 위치: ' + str(workspace))
-    st.caption('프로그램과 분석 저장소는 개인 로컬 디스크에서 실행하세요. 등록한 NAS 문의 폴더는 원본 읽기용입니다.')
-    st.caption('선택한 자료만 읽습니다. 원본 이동·삭제·덮어쓰기 없이 분석용 사본을 로컬에 보관합니다.')
-    try:
-        root_text, settings = _connected_folders(workspace)
-    except (ValueError, OSError) as exc:
-        st.error(str(exc)); return
+    st.subheader('로그를 넣으면, 확인할 문제부터 정리합니다')
+    st.caption('한 Agent의 로그로 분석합니다. err/info는 오류 원인, debug는 메시지, job은 실행·성능, dbwrap은 DB 지연 조사에 사용합니다.')
     mode = st.radio('자료 입력 방식', ['파일·압축 업로드', '등록 폴더에서 선택'], horizontal=True, key='support_input_mode')
+    try:
+        if mode == '등록 폴더에서 선택':
+            root_text, settings = _connected_folders(workspace)
+        else:
+            settings = _settings(workspace)
+            root_text = settings.get('root', '')
+    except (ValueError, OSError):
+        st.error('폴더 연결 설정을 읽지 못했습니다. 로컬 설정 파일을 확인하세요.'); return
     hint = {}; context = ''
     if mode == '등록 폴더에서 선택':
         st.caption('#번호_고객사 이름의 바로 아래 문의 폴더를 찾습니다. 전체 드라이브나 다른 문의의 로그 내용은 자동으로 읽지 않습니다.')
@@ -93,7 +95,8 @@ def render_intake(app_root: Path) -> None:
         uploads = st.file_uploader('로그·ZIP·TAR·TGZ·GZ 파일 선택', accept_multiple_files=True,
                                    key='support_files', help='회전 로그 .log.1도 선택 가능합니다. 지원하지 않는 파일은 목록에서 이유를 표시합니다.')
         context = _key((mode, [(f.name, f.size, getattr(f, 'file_id', None)) for f in uploads or []]))
-        if uploads and st.button('업로드 자료 목록 확인', key='support_upload_scan'):
+        previous = st.session_state.get('support_inventory')
+        if uploads and (not previous or previous[0] != context):
             try:
                 validate_upload_limits([f.size for f in uploads])
                 candidates = []; notices = []
@@ -107,7 +110,8 @@ def render_intake(app_root: Path) -> None:
                 st.session_state.pop('support_inventory', None); st.error(str(exc))
     inventory = st.session_state.get('support_inventory')
     if not inventory or inventory[0] != context:
-        st.caption('목록 확인을 먼저 실행하세요. 압축 파일은 원본 폴더에 풀지 않습니다.'); return
+        st.markdown('<div class="intake-guide"><strong>필요한 로그만 선택하세요.</strong><p><b>err / info</b> · 연결 실패, 예외 원인과 실패 작업</p><p><b>debug</b> · 메시지 번호 검색, 수락·결과 기록</p><p><b>job</b> · 실행 지연, RUNNING, 관측 처리량</p><p><b>dbwrap (선택)</b> · DB 실패·지연. 메시지 검색에는 필요하지 않습니다.</p></div>', unsafe_allow_html=True)
+        st.caption('로그·압축파일을 선택하면 목록을 확인합니다. 원본 폴더에는 압축을 풀거나 파일을 변경하지 않습니다.'); return
     _, candidates, notices = inventory
     if notices:
         with st.expander(f'제외·주의 항목 {len(notices)}개', expanded=True):
@@ -126,8 +130,12 @@ def render_intake(app_root: Path) -> None:
                               default=offered if len(groups) == 1 and len(offered) <= 30 else [],
                               format_func=lambda c: c.label, key='support_selected_' + context + _key(group))
     selection_id = _key((context, [c.key for c in selected]))
-    st.caption('서버 A1/A2나 서로 다른 Agent가 섞이면 분리해서 분석하세요. 설정 파일은 분석 1회당 하나만 허용합니다.')
-    if st.button('선택 파일 읽기·분류', key='support_prepare'):
+    st.caption('선택한 파일은 한 Agent의 로그여야 합니다. 원본은 변경하지 않고 분석용 사본을 로컬에 보관합니다.')
+    loaded = st.session_state.get('support_loaded')
+    prepare = bool(selected) and mode == '파일·압축 업로드' and (not loaded or loaded[0] != selection_id)
+    if mode == '등록 폴더에서 선택':
+        prepare = st.button('선택 파일 읽기·분류', key='support_prepare')
+    if prepare:
         try:
             payloads = load_candidates(selected)
             inspected = inspect_uploads(payloads)
@@ -137,31 +145,29 @@ def render_intake(app_root: Path) -> None:
     loaded = st.session_state.get('support_loaded')
     if not loaded or loaded[0] != selection_id: return
     _, payloads, inspected = loaded
-    st.markdown('#### 파일 분류 및 분석 범위')
-    st.dataframe([{'원본/압축 경로': x.upload.origin or x.upload.name, '유형': x.kind,
-                   '날짜 근거': x.date_hint or '없음', '처음 시각(표본)': x.first_time_hint or '-',
-                   '마지막 시각(표본)': x.last_time_hint or '-', '줄 수': x.line_count,
-                   '중복': f'{x.duplicate_of}번과 동일(저장 제외)' if x.duplicate_of else '-'} for x in inspected],
-                  hide_index=True, width='stretch')
-    missing = {'job','debug','dbwrap','err'} - {x.kind for x in inspected}
-    if missing: st.caption('미제공 로그 종류: ' + ', '.join(sorted(missing)) + ' — 필요 여부는 문의 증상에 따라 확인하세요.')
-    for x in inspected:
-        for warning in x.warnings: st.warning(f'{x.label}: {warning}')
-    st.markdown('#### 문의 정보')
-    reference = st.text_input('Redmine 번호 또는 이슈 링크 (선택)', key='support_ref', placeholder='#12345 또는 https://…/issues/12345')
-    customer = st.text_input('고객사', key='support_customer', max_chars=240)
-    title = st.text_input('문의 제목', key='support_title', max_chars=240)
-    problem = st.text_area('접수된 증상·문의', key='support_problem', max_chars=12000)
-    if reference:
-        try:
-            ref = redmine_ref(reference, settings.get('base_url', ''))
-            st.caption('연결할 문의: #' + ref['number'] + (' · ' + ref['base_url'] if ref['base_url'] else ' · 서버 미지정'))
-            if get_issue(workspace, ref['key']): st.info('기존 문의에 분석 자료를 추가합니다. 기존 해결 메모는 덮어쓰지 않습니다.')
-        except ValueError as exc: st.error(str(exc))
+    with st.expander('파일 분류·날짜 근거 확인', expanded=any(not x.date_hint or x.kind=='unknown' for x in inspected)):
+        st.dataframe([{'원본/압축 경로': x.upload.origin or x.upload.name, '유형': x.kind,
+                       '날짜 근거': x.date_hint or '없음', '처음 시각(표본)': x.first_time_hint or '-',
+                       '마지막 시각(표본)': x.last_time_hint or '-', '줄 수': x.line_count,
+                       '중복': f'{x.duplicate_of}번과 동일(저장 제외)' if x.duplicate_of else '-'} for x in inspected],
+                      hide_index=True, width='stretch')
+        for x in inspected:
+            for warning in x.warnings: st.warning(f'{x.label}: {warning}')
+    with st.expander('문의 정보 (선택 · 나중에 기록 가능)', expanded=False):
+        reference = st.text_input('Redmine 번호 또는 이슈 링크 (선택)', key='support_ref', placeholder='#12345 또는 https://…/issues/12345')
+        customer = st.text_input('고객사', key='support_customer', max_chars=240)
+        title = st.text_input('문의 제목', key='support_title', max_chars=240)
+        problem = st.text_area('접수된 증상·문의', key='support_problem', max_chars=12000)
+        if reference:
+            try:
+                ref = redmine_ref(reference, settings.get('base_url', ''))
+                st.caption('연결할 문의: #' + ref['number'] + (' · ' + ref['base_url'] if ref['base_url'] else ' · 서버 미지정'))
+                if get_issue(workspace, ref['key']): st.info('기존 문의에 분석 자료를 추가합니다. 기존 해결 메모는 덮어쓰지 않습니다.')
+            except ValueError as exc: st.error(str(exc))
     with st.form('support_analysis_options_' + selection_id):
-        agent = st.text_input('Agent 구분 (필수)', placeholder='예: A1 / 수집일 또는 서버별 식별명', max_chars=120)
-        version = st.selectbox('Agent 버전', ['auto', '3.2', '3.3'])
-        reference_date = st.date_input('로그 기준 날짜 (파일명에 날짜가 없을 때)', value=None)
+        agent = '단일 Agent'
+        version = 'auto'
+        reference_date = st.date_input('로그 기준 날짜 (파일명에 날짜가 없을 때)', value=None) if any(not x.date_hint for x in inspected if x.kind not in {'agent_ini','unknown'}) else None
         collected = st.text_input('실제 로그 수집 시각 (선택)', placeholder='2026-11-02 14:00')
         prepared = []
         for index, x in enumerate(inspected):
@@ -172,7 +178,7 @@ def render_intake(app_root: Path) -> None:
                 kind = b.selectbox('로그 유형 보정', ['auto', *KINDS], key=f'kind_{selection_id}_{index}')
                 prepared.append(replace(x.upload, completeness=completeness, override_kind=None if kind == 'auto' else kind))
         same = st.checkbox('선택한 파일들이 같은 Agent 인스턴스의 자료임을 확인했습니다.')
-        submitted = st.form_submit_button('문의에 연결하고 분석', type='primary')
+        submitted = st.form_submit_button('분석 시작', type='primary')
     if submitted:
         try:
             with st.spinner('원본 검증 · 로컬 저장 · 문의 연결 · 로그 분석 중...'):

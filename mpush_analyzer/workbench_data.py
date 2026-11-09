@@ -145,7 +145,13 @@ def _safe_details(event: dict[str, Any]) -> dict[str, Any]:
         }
     if kind == "log_error":
         from .exception_chain import chain_label
+        from .error_semantics import describe_error
+        semantic = describe_error(d)
         return {
+            "오류 설명": semantic["title"],
+            "관측 내용": semantic["fact"],
+            "실패 작업": semantic["operation"],
+            "추가 확인": semantic["check"],
             "예외 원인 체인": chain_label(d),
             "체인 제한": "일부만 보관" if d.get("chain_truncated") is True else "관측된 구조",
             "예외 유형": _code(d.get("exception_class"), SAFE_ERROR),
@@ -207,7 +213,7 @@ def _short_summary(kind: str | None, details: dict[str, Any]) -> str:
     keys = {
         "job_run": ("작업대상", "처리시간(초)"),
         "sql_execution": ("PSTMT 유형", "SQL 명령", "결과"),
-        "log_error": ("예외 유형",),
+        "log_error": ("오류 설명", "실패 작업", "예외 유형"),
         "healthcheck_result": ("헬스체크 동작",),
         "cns_response": ("응답 코드", "응답 의미"),
         "transport_event": ("통신 이벤트",),
